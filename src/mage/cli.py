@@ -145,7 +145,7 @@ def benchmark(op: str = "all"):
 def profile(
     script: str,
     args: list[str] | None = None,
-    backend: str = "nsys",
+    backend: str = "triton",
     columns: list[str] | None = None,
     group_by: str | None = None,
     no_persist: bool = False,
