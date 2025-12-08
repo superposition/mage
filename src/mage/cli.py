@@ -262,9 +262,9 @@ Examples:
     )
     profile_parser.add_argument(
         "--backend", "-b",
-        choices=["nsys", "ncu"],
-        default="nsys",
-        help="Profiler backend (default: nsys)",
+        choices=["triton", "nsys", "ncu"],
+        default="triton",
+        help="Profiler backend (default: triton, no special permissions needed)",
     )
     profile_parser.add_argument(
         "--columns", "-c",
