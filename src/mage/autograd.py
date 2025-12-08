@@ -66,6 +66,88 @@ def fma_backward_kernel(
     tl.store(grad_x_ptr + offsets, grad_out * a, mask=mask)
 
 
+@triton.autotune(
+    configs=[triton.Config({"BLOCK_SIZE": bs}) for bs in [256, 512, 1024, 2048]],
+    key=["n_elements"],
+)
+@triton.jit
+def gelu_backward_kernel(
+    grad_out_ptr,
+    x_ptr,
+    grad_x_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """GELU backward kernel.
+
+    gelu(x) = 0.5 * x * (1 + tanh(u)) where u = sqrt(2/pi) * (x + 0.044715 * x^3)
+    dgelu/dx = 0.5 * (1 + tanh(u)) + 0.5 * x * sech²(u) * du/dx
+    where du/dx = sqrt(2/pi) * (1 + 3 * 0.044715 * x²)
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    grad_out = tl.load(grad_out_ptr + offsets, mask=mask)
+    x = tl.load(x_ptr + offsets, mask=mask)
+
+    # Cast to float32 for computation accuracy
+    grad_out_fp32 = grad_out.to(tl.float32)
+    x_fp32 = x.to(tl.float32)
+
+    # Forward computation
+    x_cubed = x_fp32 * x_fp32 * x_fp32
+    u = 0.7978845608028654 * (x_fp32 + 0.044715 * x_cubed)
+    # tanh(u) = 2*sigmoid(2u) - 1
+    tanh_u = 2.0 * tl.sigmoid(2.0 * u) - 1.0
+
+    # Backward computation
+    # du/dx = sqrt(2/pi) * (1 + 3 * 0.044715 * x²)
+    du_dx = 0.7978845608028654 * (1.0 + 3.0 * 0.044715 * x_fp32 * x_fp32)
+    # sech²(u) = 1 - tanh²(u)
+    sech2_u = 1.0 - tanh_u * tanh_u
+    # dgelu/dx = 0.5 * (1 + tanh(u)) + 0.5 * x * sech²(u) * du/dx
+    grad_x = grad_out_fp32 * (0.5 * (1.0 + tanh_u) + 0.5 * x_fp32 * sech2_u * du_dx)
+
+    tl.store(grad_x_ptr + offsets, grad_x.to(x.dtype), mask=mask)
+
+
+@triton.autotune(
+    configs=[triton.Config({"BLOCK_SIZE": bs}) for bs in [256, 512, 1024, 2048]],
+    key=["n_elements"],
+)
+@triton.jit
+def silu_backward_kernel(
+    grad_out_ptr,
+    x_ptr,
+    grad_x_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """SiLU backward kernel.
+
+    silu(x) = x * sigmoid(x)
+    dsilu/dx = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+             = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    grad_out = tl.load(grad_out_ptr + offsets, mask=mask)
+    x = tl.load(x_ptr + offsets, mask=mask)
+
+    # Cast to float32 for computation accuracy
+    grad_out_fp32 = grad_out.to(tl.float32)
+    x_fp32 = x.to(tl.float32)
+
+    sigmoid_x = tl.sigmoid(x_fp32)
+    # dsilu/dx = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+    grad_x = grad_out_fp32 * sigmoid_x * (1.0 + x_fp32 * (1.0 - sigmoid_x))
+
+    tl.store(grad_x_ptr + offsets, grad_x.to(x.dtype), mask=mask)
+
+
 # =============================================================================
 # Autograd Functions
 # =============================================================================
@@ -135,6 +217,46 @@ class MageFma(torch.autograd.Function):
         grad_y = grad_out.clone()
 
         return grad_a, grad_x, grad_y
+
+
+class MageGelu(torch.autograd.Function):
+    """Autograd wrapper for GELU activation."""
+
+    @staticmethod
+    def forward(ctx, x: Tensor) -> Tensor:
+        ctx.save_for_backward(x)
+        return kernels.gelu(x)
+
+    @staticmethod
+    def backward(ctx, grad_out: Tensor) -> Tensor:
+        (x,) = ctx.saved_tensors
+        grad_out = grad_out.contiguous()
+        x = x.contiguous()
+        grad_x = torch.empty_like(x)
+        n = x.numel()
+        grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+        gelu_backward_kernel[grid](grad_out, x, grad_x, n)
+        return grad_x
+
+
+class MageSilu(torch.autograd.Function):
+    """Autograd wrapper for SiLU/Swish activation."""
+
+    @staticmethod
+    def forward(ctx, x: Tensor) -> Tensor:
+        ctx.save_for_backward(x)
+        return kernels.silu(x)
+
+    @staticmethod
+    def backward(ctx, grad_out: Tensor) -> Tensor:
+        (x,) = ctx.saved_tensors
+        grad_out = grad_out.contiguous()
+        x = x.contiguous()
+        grad_x = torch.empty_like(x)
+        n = x.numel()
+        grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+        silu_backward_kernel[grid](grad_out, x, grad_x, n)
+        return grad_x
 
 
 # =============================================================================

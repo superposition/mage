@@ -1,8 +1,9 @@
 """Mage - Composable Triton CUDA kernels with autotuning."""
 
 from mage import kernels
-from mage.autograd import MageAdd, MageFma, MageMatmul, MageRelu, MageSoftmax
+from mage.autograd import MageAdd, MageFma, MageGelu, MageMatmul, MageRelu, MageSilu, MageSoftmax
 from mage.matmul import matmul as _matmul_forward
+from mage.normalization import MageRMSNorm
 
 
 # Public API uses autograd versions for training compatibility
@@ -47,4 +48,31 @@ def matmul(a, b, out_dtype=None):
     return MageMatmul.apply(a, b)
 
 
-__all__ = ["add", "fma", "relu", "softmax", "matmul"]
+def rmsnorm(x, weight, eps=1e-6):
+    """RMSNorm with autograd support.
+
+    Args:
+        x: Input tensor of shape (*, hidden_size)
+        weight: Learnable weight of shape (hidden_size,)
+        eps: Small constant for numerical stability
+
+    Returns:
+        Normalized tensor of same shape as x
+    """
+    return MageRMSNorm.apply(x, weight, eps)
+
+
+def gelu(x):
+    """GELU activation with autograd support.
+
+    Uses the tanh approximation: x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    """
+    return MageGelu.apply(x)
+
+
+def silu(x):
+    """SiLU/Swish activation with autograd support: x * sigmoid(x)."""
+    return MageSilu.apply(x)
+
+
+__all__ = ["add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu"]
