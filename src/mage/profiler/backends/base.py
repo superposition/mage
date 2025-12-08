@@ -59,5 +59,30 @@ class ProfilerBackend(ABC):
 
     def is_available(self) -> bool:
         """Check if this profiler is available on the system."""
+        return self.find_executable() is not None
+
+    def find_executable(self) -> str | None:
+        """Find the profiler executable, checking common CUDA paths."""
         import shutil
-        return shutil.which(self.name) is not None
+        from pathlib import Path
+
+        # Check PATH first
+        exe = shutil.which(self.name)
+        if exe:
+            return exe
+
+        # Check common CUDA installation paths
+        cuda_paths = [
+            Path("/usr/local/cuda/bin"),
+            Path("/usr/local/cuda-12/bin"),
+            Path("/usr/local/cuda-12.8/bin"),
+            Path("/opt/nvidia/nsight-compute/"),
+            Path.home() / ".local" / "cuda" / "bin",
+        ]
+
+        for cuda_path in cuda_paths:
+            candidate = cuda_path / self.name
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
+
+        return None

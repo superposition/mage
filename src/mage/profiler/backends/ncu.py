@@ -76,8 +76,12 @@ class NcuBackend(ProfilerBackend):
 
     def get_command(self, script: str, args: list[str] | None = None) -> list[str]:
         """Build ncu profile command."""
+        ncu_path = self.find_executable()
+        if not ncu_path:
+            raise RuntimeError("ncu executable not found")
+
         cmd = [
-            "ncu",
+            ncu_path,
             "--csv",
             "--target-processes", "all",
             "--set", "full",  # Collect comprehensive metrics

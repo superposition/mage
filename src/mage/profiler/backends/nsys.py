@@ -25,11 +25,15 @@ class NsysBackend(ProfilerBackend):
 
     def get_command(self, script: str, args: list[str] | None = None) -> list[str]:
         """Build nsys profile command."""
+        nsys_path = self.find_executable()
+        if not nsys_path:
+            raise RuntimeError("nsys executable not found")
+
         self._temp_dir = tempfile.mkdtemp(prefix="mage_nsys_")
         output_path = Path(self._temp_dir) / "profile"
 
         cmd = [
-            "nsys", "profile",
+            nsys_path, "profile",
             "--stats=true",
             "--force-overwrite=true",
             f"--output={output_path}",
