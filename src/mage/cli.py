@@ -1,6 +1,7 @@
 """CLI entry point for mage."""
 
 import argparse
+import sys
 
 import torch
 
@@ -141,30 +142,161 @@ def benchmark(op: str = "all"):
     print("Available: all, add, matmul, relu, softmax, backward")
 
 
+def profile(
+    script: str,
+    args: list[str] | None = None,
+    backend: str = "nsys",
+    columns: list[str] | None = None,
+    group_by: str | None = None,
+    no_persist: bool = False,
+    db_path: str | None = None,
+) -> int:
+    """Profile a Python script using nsys or ncu.
+
+    Args:
+        script: Path to the Python script to profile
+        args: Additional arguments to pass to the script
+        backend: Profiler backend ('nsys' or 'ncu')
+        columns: List of columns to display
+        group_by: Field to group metrics by
+        no_persist: Don't save to database
+        db_path: Custom database path
+
+    Returns:
+        Exit code (0 for success)
+    """
+    from mage.profiler import get_backend, ProfilerTUI, ProfileDB
+
+    # Get the profiler backend
+    try:
+        profiler = get_backend(backend)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+    if not profiler.is_available():
+        print(f"Error: {backend} is not available on this system")
+        print(f"Make sure NVIDIA {backend} is installed and in your PATH")
+        return 1
+
+    # Set up TUI
+    tui = ProfilerTUI(columns=columns, group_by=group_by)
+    tui.start_session(f"python {script}", backend=backend)
+
+    print(f"Profiling {script} with {backend}...")
+    print("This may take a moment...\n")
+
+    # Run profiler
+    try:
+        for metric in profiler.run(script, args, callback=tui.add_metric):
+            pass  # Metrics added via callback
+    except KeyboardInterrupt:
+        print("\nProfiling interrupted")
+    except Exception as e:
+        print(f"Error during profiling: {e}")
+        return 1
+    finally:
+        tui.finish()
+        if hasattr(profiler, "cleanup"):
+            profiler.cleanup()
+
+    # Display results
+    tui.print_final()
+    tui.print_summary()
+
+    # Save to database
+    if not no_persist and tui.session:
+        try:
+            db = ProfileDB(db_path) if db_path else ProfileDB()
+            session_id = db.save_session(tui.session)
+            print(f"\nSession saved to database (id={session_id})")
+        except Exception as e:
+            print(f"Warning: Could not save to database: {e}")
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Mage - High-performance Triton CUDA kernels",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  mage demo              Run quick correctness demo
-  mage bench             Run all benchmarks
-  mage bench matmul      Run matmul benchmarks only
-  mage bench backward    Run backward pass benchmarks
-        """,
     )
-    parser.add_argument(
-        "command", nargs="?", default="demo", choices=["demo", "bench"], help="Command to run"
-    )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Demo command
+    demo_parser = subparsers.add_parser("demo", help="Run quick correctness demo")
+
+    # Bench command
+    bench_parser = subparsers.add_parser("bench", help="Run benchmarks")
+    bench_parser.add_argument(
         "operation",
         nargs="?",
         default="all",
         choices=["all", "add", "matmul", "relu", "softmax", "backward"],
-        help="Operation to benchmark (only for bench command)",
+        help="Operation to benchmark",
     )
+
+    # Profile command
+    profile_parser = subparsers.add_parser(
+        "profile",
+        help="Profile a Python script with nsys or ncu",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  mage profile script.py
+  mage profile --backend ncu script.py
+  mage profile --columns kernel,duration,occupancy script.py
+  mage profile --group-by kernel_name script.py
+        """,
+    )
+    profile_parser.add_argument("script", help="Python script to profile")
+    profile_parser.add_argument(
+        "script_args", nargs="*", help="Arguments to pass to the script"
+    )
+    profile_parser.add_argument(
+        "--backend", "-b",
+        choices=["nsys", "ncu"],
+        default="nsys",
+        help="Profiler backend (default: nsys)",
+    )
+    profile_parser.add_argument(
+        "--columns", "-c",
+        help="Comma-separated list of columns to display",
+    )
+    profile_parser.add_argument(
+        "--group-by", "-g",
+        help="Group metrics by field (e.g., kernel_name)",
+    )
+    profile_parser.add_argument(
+        "--no-persist",
+        action="store_true",
+        help="Don't save results to database",
+    )
+    profile_parser.add_argument(
+        "--db",
+        help="Custom database path",
+    )
+
     args = parser.parse_args()
 
+    # Default to demo if no command given
+    if args.command is None:
+        args.command = "demo"
+
+    # Profile command doesn't require CUDA check (profiler handles it)
+    if args.command == "profile":
+        columns = args.columns.split(",") if args.columns else None
+        return profile(
+            script=args.script,
+            args=args.script_args or None,
+            backend=args.backend,
+            columns=columns,
+            group_by=args.group_by,
+            no_persist=args.no_persist,
+            db_path=args.db,
+        )
+
+    # Other commands require CUDA
     if not torch.cuda.is_available():
         print("ERROR: CUDA not available")
         return 1
