@@ -116,7 +116,9 @@ def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     """Element-wise addition on GPU."""
     output = torch.empty_like(x)
     n = output.numel()
-    add_kernel[(triton.cdiv(n, 1024),)](x, y, output, n)
+    # Grid must use the actual BLOCK_SIZE from autotune
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+    add_kernel[grid](x, y, output, n)
     return output
 
 
@@ -124,7 +126,9 @@ def fma(a: torch.Tensor, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     """Fused multiply-add: a * x + y (no intermediate allocation)."""
     output = torch.empty_like(x)
     n = output.numel()
-    fma_kernel[(triton.cdiv(n, 1024),)](a, x, y, output, n)
+    # Grid must use the actual BLOCK_SIZE from autotune
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+    fma_kernel[grid](a, x, y, output, n)
     return output
 
 
@@ -143,5 +147,7 @@ def relu(x: torch.Tensor) -> torch.Tensor:
     """ReLU activation."""
     output = torch.empty_like(x)
     n = output.numel()
-    relu_kernel[(triton.cdiv(n, 1024),)](x, output, n)
+    # Grid must use the actual BLOCK_SIZE from autotune
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+    relu_kernel[grid](x, output, n)
     return output

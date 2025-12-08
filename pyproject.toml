@@ -15,5 +15,14 @@ dependencies = [
 [project.scripts]
 mage = "mage.cli:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-xdist",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
