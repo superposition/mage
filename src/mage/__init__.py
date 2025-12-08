@@ -5,6 +5,8 @@ from mage.autograd import MageAdd, MageFma, MageGelu, MageMatmul, MageRelu, Mage
 from mage.matmul import matmul as _matmul_forward
 from mage.normalization import MageRMSNorm
 from mage.attention import FlashAttentionFunc
+from mage.rope import RoPEFunc, precompute_freqs
+from mage.kv_cache import KVCache, create_kv_cache
 
 
 # Public API uses autograd versions for training compatibility
@@ -91,4 +93,21 @@ def flash_attention(q, k, v, softmax_scale=None):
     return FlashAttentionFunc.apply(q, k, v, softmax_scale)
 
 
-__all__ = ["add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu", "flash_attention"]
+def rope(x, cos, sin):
+    """Apply Rotary Position Embeddings (RoPE) with autograd support.
+
+    Args:
+        x: Input tensor of shape (batch, num_heads, seq_len, head_dim)
+        cos: Cosine values of shape (max_seq_len, head_dim // 2)
+        sin: Sine values of shape (max_seq_len, head_dim // 2)
+
+    Returns:
+        Output tensor with RoPE applied
+    """
+    return RoPEFunc.apply(x, cos, sin)
+
+
+__all__ = [
+    "add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu",
+    "flash_attention", "rope", "precompute_freqs", "KVCache", "create_kv_cache",
+]
