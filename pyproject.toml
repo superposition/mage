@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mage"
+version = "0.1.0"
+description = "Hello World Triton CUDA kernels"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "triton>=3.0.0",
+]
+
+[project.scripts]
+mage = "mage.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mage"]
