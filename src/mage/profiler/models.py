@@ -30,13 +30,31 @@ class KernelMetric:
     memory_throughput_gbps: float | None = None
     compute_throughput_pct: float | None = None
 
-    # Cache metrics
+    # Cache metrics - L1
     l1_hit_rate: float | None = None
-    l2_hit_rate: float | None = None
+    l1_bytes_total: int | None = None
+    l1_utilization: float | None = None  # % of peak
 
-    # Memory operations
+    # Cache metrics - L2
+    l2_hit_rate: float | None = None
+    l2_bytes_total: int | None = None
+    l2_bytes_miss: int | None = None
+    l2_utilization: float | None = None  # % of peak
+
+    # Global memory (DRAM)
     dram_read_bytes: int | None = None
     dram_write_bytes: int | None = None
+    dram_utilization: float | None = None  # % of peak
+
+    # Memory efficiency
+    global_load_efficiency: float | None = None  # ratio (ideal is 1.0)
+    global_store_efficiency: float | None = None
+    global_load_transactions: int | None = None
+    global_store_transactions: int | None = None
+
+    # Shared memory
+    shared_utilization: float | None = None  # % of peak
+    shared_bank_conflicts: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""

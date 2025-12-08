@@ -20,15 +20,37 @@ NCU_METRIC_MAP = {
     # Occupancy
     "sm__warps_active.avg.pct_of_peak_sustained_active": "occupancy",
 
-    # Memory bandwidth
+    # Memory bandwidth - Global/DRAM
     "dram__bytes.sum.per_second": "memory_throughput_raw",  # bytes/sec
+    "dram__bytes_read.sum": "dram_read_bytes",
+    "dram__bytes_write.sum": "dram_write_bytes",
+    "dram__throughput.avg.pct_of_peak_sustained_elapsed": "dram_utilization",
+
+    # Memory - L2 Cache
+    "lts__t_sector_hit_rate.pct": "l2_hit_rate",
+    "lts__t_bytes.sum": "l2_bytes_total",
+    "lts__t_bytes_lookup_miss.sum": "l2_bytes_miss",
+    "lts__throughput.avg.pct_of_peak_sustained_elapsed": "l2_utilization",
+
+    # Memory - L1/Texture Cache
+    "l1tex__t_sector_hit_rate.pct": "l1_hit_rate",
+    "l1tex__t_bytes.sum": "l1_bytes_total",
+    "l1tex__throughput.avg.pct_of_peak_sustained_elapsed": "l1_utilization",
+
+    # Memory - Shared Memory
+    "l1tex__data_pipe_lsu_wavefronts_mem_shared.avg.pct_of_peak_sustained_elapsed": "shared_utilization",
+    "l1tex__data_bank_conflicts_pipe_lsu_mem_shared.sum": "shared_bank_conflicts",
+
+    # Memory - Global Load/Store efficiency
+    "smsp__sass_average_data_bytes_per_sector_mem_global_op_ld.ratio": "global_load_efficiency",
+    "smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio": "global_store_efficiency",
+
+    # Memory transactions
+    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": "global_load_transactions",
+    "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": "global_store_transactions",
 
     # Compute
     "sm__throughput.avg.pct_of_peak_sustained_elapsed": "compute_throughput_pct",
-
-    # Cache
-    "l1tex__t_sector_hit_rate.pct": "l1_hit_rate",
-    "lts__t_sector_hit_rate.pct": "l2_hit_rate",
 
     # Launch config
     "launch__registers_per_thread": "registers_per_thread",
@@ -36,10 +58,6 @@ NCU_METRIC_MAP = {
     "launch__shared_mem_per_block_dynamic": "dynamic_shared_mem_bytes",
     "launch__grid_size": "grid_size_raw",
     "launch__block_size": "block_size_raw",
-
-    # Memory operations
-    "dram__bytes_read.sum": "dram_read_bytes",
-    "dram__bytes_write.sum": "dram_write_bytes",
 }
 
 
@@ -210,6 +228,10 @@ class NcuBackend(ProfilerBackend):
         if static_smem is not None or dynamic_smem is not None:
             total_smem = (static_smem or 0) + (dynamic_smem or 0)
 
+        # Convert efficiency ratios (ncu reports as ratio, we want 0-1)
+        load_eff = data.get("global_load_efficiency")
+        store_eff = data.get("global_store_efficiency")
+
         return KernelMetric(
             kernel_name=data["kernel_name"],
             duration_us=duration_us or 0.0,
@@ -223,10 +245,27 @@ class NcuBackend(ProfilerBackend):
             occupancy=occupancy,
             memory_throughput_gbps=mem_throughput,
             compute_throughput_pct=data.get("compute_throughput_pct"),
+            # L1 cache
             l1_hit_rate=data.get("l1_hit_rate"),
+            l1_bytes_total=data.get("l1_bytes_total"),
+            l1_utilization=data.get("l1_utilization"),
+            # L2 cache
             l2_hit_rate=data.get("l2_hit_rate"),
+            l2_bytes_total=data.get("l2_bytes_total"),
+            l2_bytes_miss=data.get("l2_bytes_miss"),
+            l2_utilization=data.get("l2_utilization"),
+            # DRAM
             dram_read_bytes=data.get("dram_read_bytes"),
             dram_write_bytes=data.get("dram_write_bytes"),
+            dram_utilization=data.get("dram_utilization"),
+            # Memory efficiency
+            global_load_efficiency=load_eff,
+            global_store_efficiency=store_eff,
+            global_load_transactions=data.get("global_load_transactions"),
+            global_store_transactions=data.get("global_store_transactions"),
+            # Shared memory
+            shared_utilization=data.get("shared_utilization"),
+            shared_bank_conflicts=data.get("shared_bank_conflicts"),
         )
 
     def _parse_dim(self, value: str | tuple | int) -> tuple[int, int, int]:
