@@ -150,6 +150,7 @@ def profile(
     group_by: str | None = None,
     no_persist: bool = False,
     db_path: str | None = None,
+    analyze: bool = False,
 ) -> int:
     """Profile a Python script using nsys or ncu.
 
@@ -161,11 +162,12 @@ def profile(
         group_by: Field to group metrics by
         no_persist: Don't save to database
         db_path: Custom database path
+        analyze: Run memory analysis after profiling
 
     Returns:
         Exit code (0 for success)
     """
-    from mage.profiler import get_backend, ProfilerTUI, ProfileDB
+    from mage.profiler import get_backend, ProfilerTUI, ProfileDB, print_memory_report
 
     # Get the profiler backend
     try:
@@ -203,6 +205,11 @@ def profile(
     # Display results
     tui.print_final()
     tui.print_summary()
+
+    # Memory analysis
+    if analyze and tui.aggregator.metrics:
+        print("\n")
+        print_memory_report(tui.aggregator.metrics)
 
     # Save to database
     if not no_persist and tui.session:
@@ -276,6 +283,11 @@ Examples:
         "--db",
         help="Custom database path",
     )
+    profile_parser.add_argument(
+        "--analyze", "-a",
+        action="store_true",
+        help="Run memory analysis after profiling",
+    )
 
     args = parser.parse_args()
 
@@ -294,6 +306,7 @@ Examples:
             group_by=args.group_by,
             no_persist=args.no_persist,
             db_path=args.db,
+            analyze=args.analyze,
         )
 
     # Other commands require CUDA
