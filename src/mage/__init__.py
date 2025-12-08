@@ -4,6 +4,7 @@ from mage import kernels
 from mage.autograd import MageAdd, MageFma, MageGelu, MageMatmul, MageRelu, MageSilu, MageSoftmax
 from mage.matmul import matmul as _matmul_forward
 from mage.normalization import MageRMSNorm
+from mage.attention import FlashAttentionFunc
 
 
 # Public API uses autograd versions for training compatibility
@@ -75,4 +76,19 @@ def silu(x):
     return MageSilu.apply(x)
 
 
-__all__ = ["add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu"]
+def flash_attention(q, k, v, softmax_scale=None):
+    """Flash Attention: memory-efficient attention mechanism.
+
+    Args:
+        q: Query tensor of shape (B, H, M, K)
+        k: Key tensor of shape (B, H, N, K)
+        v: Value tensor of shape (B, H, N, K)
+        softmax_scale: Scale factor for softmax (default: 1/sqrt(K))
+
+    Returns:
+        Output tensor of shape (B, H, M, K)
+    """
+    return FlashAttentionFunc.apply(q, k, v, softmax_scale)
+
+
+__all__ = ["add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu", "flash_attention"]
