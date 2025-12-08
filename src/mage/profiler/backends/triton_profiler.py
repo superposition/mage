@@ -25,7 +25,9 @@ class KernelCall:
     grid: tuple
     block_size: int | None = None
     num_warps: int | None = None
+    num_stages: int | None = None
     shared_mem: int | None = None
+    n_regs: int | None = None  # registers per thread
     timestamp: datetime = field(default_factory=datetime.now)
 
 
@@ -108,13 +110,43 @@ class TritonProfiler:
 
             # Store the call info (don't sync yet)
             if not warmup:
-                # Extract kernel info
+                # Mark grid as dynamic if it's a callable (can't resolve without meta)
+                is_dynamic_grid = callable(grid)
+                if is_dynamic_grid:
+                    resolved_grid = None  # Will show as "dynamic"
+                elif isinstance(grid, int):
+                    resolved_grid = (grid,)
+                else:
+                    resolved_grid = tuple(grid)
+
+                # Try to extract kernel info from compiled binary
+                n_regs = None
+                shared_mem = None
+                num_stages_actual = num_stages
+
+                # Try to get register count from kernel cache
+                try:
+                    if hasattr(jit_fn, 'cache') and jit_fn.cache:
+                        for key, compiled in jit_fn.cache.items():
+                            if hasattr(compiled, 'n_regs'):
+                                n_regs = compiled.n_regs
+                            if hasattr(compiled, 'shared'):
+                                shared_mem = compiled.shared
+                            if hasattr(compiled, 'num_stages'):
+                                num_stages_actual = compiled.num_stages
+                            break
+                except Exception:
+                    pass
+
                 call = KernelCall(
                     name=jit_fn.fn.__name__,
                     start_event=start_event,
                     end_event=end_event,
-                    grid=grid if isinstance(grid, tuple) else (grid,),
+                    grid=resolved_grid,
                     num_warps=num_warps,
+                    num_stages=num_stages_actual,
+                    shared_mem=shared_mem,
+                    n_regs=n_regs,
                 )
                 profiler.calls.append(call)
 
@@ -138,22 +170,10 @@ class TritonProfiler:
             duration_ms = call.start_event.elapsed_time(call.end_event)
             duration_us = duration_ms * 1000
 
-            # Parse grid - handle callable grids by using stored value or default
+            # Grid is already resolved at capture time (None = dynamic)
             grid = call.grid
-            if callable(grid):
-                # Try to call it if it's a simple lambda
-                try:
-                    result = grid({})  # Try with empty dict for meta
-                    if isinstance(result, (int, tuple)):
-                        grid = result if isinstance(result, tuple) else (result,)
-                    else:
-                        grid = (1, 1, 1)
-                except:
-                    grid = (1, 1, 1)
-
-            # Normalize grid to 3-tuple
-            if isinstance(grid, int):
-                grid = (grid, 1, 1)
+            if grid is None:
+                grid = (0, 0, 0)  # Marker for dynamic grid
             elif len(grid) == 1:
                 grid = (grid[0], 1, 1)
             elif len(grid) == 2:
@@ -172,6 +192,8 @@ class TritonProfiler:
                 timestamp=call.timestamp,
                 grid_size=grid,
                 block_size=block,
+                registers_per_thread=call.n_regs,
+                shared_mem_bytes=call.shared_mem,
             ))
 
         return metrics

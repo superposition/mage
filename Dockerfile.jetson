@@ -1,0 +1,34 @@
+# Dockerfile for Jetson Orin Nano (JetPack 6.0 / L4T R36.3)
+# Build: docker build -f Dockerfile.jetson -t mage-jetson .
+# Run: docker run --runtime nvidia -it mage-jetson
+
+FROM nvcr.io/nvidia/l4t-pytorch:r36.3.0-pth2.1-py3
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml .
+COPY src/ src/
+COPY script.py .
+
+# Install Python dependencies (torch already in base image)
+# Skip torch/triton as they're pre-installed in L4T image
+RUN pip3 install --no-cache-dir \
+    rich>=13.0.0 \
+    textual>=0.40.0 \
+    textual-dev>=1.0.0
+
+# Install mage in editable mode (without deps to avoid torch conflict)
+RUN pip3 install -e . --no-deps
+
+# Verify installation
+RUN python3 -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
+
+# Default command
+CMD ["python3", "-m", "mage", "demo"]

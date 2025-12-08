@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import os
 import subprocess
+import sys
 from datetime import datetime
 from io import StringIO
 from typing import Iterator, Callable
@@ -80,6 +82,11 @@ class NcuBackend(ProfilerBackend):
         if not ncu_path:
             raise RuntimeError("ncu executable not found")
 
+        # ncu requires absolute path to Python executable
+        python_path = sys.executable
+        # Get absolute path to script
+        script_path = os.path.abspath(script)
+
         cmd = [
             ncu_path,
             "--csv",
@@ -91,7 +98,7 @@ class NcuBackend(ProfilerBackend):
         # for metric in self.metrics:
         #     cmd.extend(["--metrics", metric])
 
-        cmd.extend(["python", script])
+        cmd.extend([python_path, script_path])
         if args:
             cmd.extend(args)
         return cmd

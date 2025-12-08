@@ -58,6 +58,8 @@ class Column:
 def _format_grid(metric: KernelMetric) -> str:
     """Format grid size as string."""
     g = metric.grid_size
+    if g == (0, 0, 0):
+        return "auto"  # Dynamic grid from lambda
     if g[1] == 1 and g[2] == 1:
         return str(g[0])
     elif g[2] == 1:
@@ -242,7 +244,7 @@ COLUMNS: dict[str, Column] = {
 }
 
 # Default columns to show
-DEFAULT_COLUMNS = ["kernel", "duration", "occupancy", "mem_bw", "grid", "block"]
+DEFAULT_COLUMNS = ["kernel", "duration", "grid", "block"]
 
 
 class ColumnConfig:

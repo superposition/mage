@@ -1,0 +1,39 @@
+services:
+  mage:
+    build: .
+    # Required for GPU profiling (ncu/nsys)
+    privileged: true
+    # GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Mount current directory for development
+    volumes:
+      - ./src:/app/src:ro
+      - ./script.py:/app/script.py:ro
+      - ./profiles:/app/profiles
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+    working_dir: /app
+    # Default command
+    command: ["bash"]
+
+  # Quick profile run
+  profile:
+    extends: mage
+    command: ["mage", "profile", "--backend", "ncu", "script.py"]
+
+  # Stress test
+  stress:
+    extends: mage
+    command: ["mage", "stress"]
+
+  # Quick stress test
+  stress-quick:
+    extends: mage
+    command: ["mage", "stress", "--quick"]

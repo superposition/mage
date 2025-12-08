@@ -289,6 +289,23 @@ Examples:
         help="Run memory analysis after profiling",
     )
 
+    # Stress test command
+    stress_parser = subparsers.add_parser(
+        "stress",
+        help="Run GPU stress tests (memory, compute, cache, roofline)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  mage stress              # Full stress test suite
+  mage stress --quick      # Quick version (~1 minute)
+        """,
+    )
+    stress_parser.add_argument(
+        "--quick", "-q",
+        action="store_true",
+        help="Run quick version with fewer iterations",
+    )
+
     args = parser.parse_args()
 
     # Default to demo if no command given
@@ -318,6 +335,9 @@ Examples:
         demo()
     elif args.command == "bench":
         benchmark(args.operation)
+    elif args.command == "stress":
+        from mage.stress import run_stress_suite
+        run_stress_suite(quick=args.quick)
 
     return 0
 
