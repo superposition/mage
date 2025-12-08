@@ -7,6 +7,7 @@ from mage.normalization import MageRMSNorm
 from mage.attention import FlashAttentionFunc
 from mage.rope import RoPEFunc, precompute_freqs
 from mage.kv_cache import KVCache, create_kv_cache
+from mage.fused_mlp import silu_mul, FusedMLP, fused_mlp_forward
 
 
 # Public API uses autograd versions for training compatibility
@@ -110,4 +111,5 @@ def rope(x, cos, sin):
 __all__ = [
     "add", "fma", "relu", "softmax", "matmul", "rmsnorm", "gelu", "silu",
     "flash_attention", "rope", "precompute_freqs", "KVCache", "create_kv_cache",
+    "silu_mul", "FusedMLP", "fused_mlp_forward",
 ]
