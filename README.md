@@ -217,6 +217,18 @@ flowchart TB
 - **Temperature Dynamics**: Softmax sampling at multiple temperatures confirms confidence calibration while preserving the correct top choice.
 - **Execution Tip**: Run the focused suites with `uv run pytest tests/test_tensor_transformer.py -k transformer` or `-k reasoning` to iterate quickly.
 
+## Graphical Models in Tensor Logic
+
+| Component | Tensor Logic Implementation |
+|-----------|-----------------------------|
+| Factor | Tensor |
+| Marginalization | Projection |
+| Pointwise product | Join |
+| Join tree | Tree-like program |
+| \(P(\text{Query}\mid\text{Evidence})\) | `Prog(Q,E) / Prog(E)` |
+| Belief propagation | Forward chaining |
+| Sampling | Selective projection |
+
 ### Benchmarks
 
 ```

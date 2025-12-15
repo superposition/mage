@@ -13,9 +13,23 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Sequence
 
 import torch
+
+
+class _ShapeProxy:
+    """Lightweight stand-in exposing ``shape``/``ndim`` for cache planning."""
+
+    __slots__ = ("shape",)
+
+    def __init__(self, shape: Sequence[int]):
+        self.shape = tuple(int(dim) for dim in shape)
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
 
 
 @dataclass(slots=True)
@@ -120,10 +134,12 @@ def tensor_join(
     if not operands:
         raise ValueError("tensor_join requires at least one operand")
 
+    cleaned_equation = equation.replace(" ", "")
+
     if plan is None:
-        plan = TensorJoinPlan.from_equation(equation, operands)
+        plan = _get_or_create_plan(cleaned_equation, operands)
     else:
-        if plan.equation.replace(" ", "") != equation.replace(" ", ""):
+        if plan.equation != cleaned_equation:
             raise ValueError("plan equation does not match provided equation")
         _validate_against_plan(plan, operands)
 
@@ -134,6 +150,18 @@ def tensor_join(
         if out_dtype is not None and result.dtype != out_dtype:
             result = result.to(out_dtype)
     return result
+
+
+def tensor_join_cache_clear() -> None:
+    """Clear the internal plan cache used by :func:`tensor_join`."""
+
+    _cached_plan.cache_clear()
+
+
+def tensor_join_cache_info() -> "functools._CacheInfo":
+    """Return cache statistics for the internal plan cache."""
+
+    return _cached_plan.cache_info()
 
 
 def _validate_against_plan(plan: TensorJoinPlan, operands: Sequence[torch.Tensor]) -> None:
@@ -264,3 +292,16 @@ def _tensor_join_binary_matmul(
     if out_dtype is not None and result.dtype != out_dtype:
         result = result.to(out_dtype)
     return result
+
+
+def _get_or_create_plan(equation: str, operands: Sequence[torch.Tensor]) -> TensorJoinPlan:
+    shapes = tuple(tuple(int(dim) for dim in tensor.shape) for tensor in operands)
+    plan = _cached_plan(equation, shapes)
+    _validate_against_plan(plan, operands)
+    return plan
+
+
+@lru_cache(maxsize=512)
+def _cached_plan(equation: str, shapes: tuple[tuple[int, ...], ...]) -> TensorJoinPlan:
+    proxies = [_ShapeProxy(shape) for shape in shapes]
+    return TensorJoinPlan.from_equation(equation, proxies)  # type: ignore[arg-type]

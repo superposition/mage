@@ -7,6 +7,16 @@ so we can iterate on the API, tests, and integration points before
 writing the Triton implementation.
 """
 
-from .join import TensorJoinPlan, tensor_join
+from .join import (
+	TensorJoinPlan,
+	tensor_join,
+	tensor_join_cache_clear,
+	tensor_join_cache_info,
+)
 
-__all__ = ["TensorJoinPlan", "tensor_join"]
+__all__ = [
+	"TensorJoinPlan",
+	"tensor_join",
+	"tensor_join_cache_clear",
+	"tensor_join_cache_info",
+]

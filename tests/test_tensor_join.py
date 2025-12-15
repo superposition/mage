@@ -1,7 +1,12 @@
 import pytest
 import torch
 
-from mage.tensor_logic import TensorJoinPlan, tensor_join
+from mage.tensor_logic import (
+    TensorJoinPlan,
+    tensor_join,
+    tensor_join_cache_clear,
+    tensor_join_cache_info,
+)
 
 
 @pytest.mark.parametrize(
@@ -117,3 +122,19 @@ def test_tensor_join_outer_product_matches_einsum(device):
     result = tensor_join("ab,cd->abcd", a, b)
 
     assert torch.allclose(result, expected, atol=1e-6, rtol=1e-5)
+
+
+def test_tensor_join_plan_cache_tracks_hits(device):
+    tensor_join_cache_clear()
+
+    a = torch.randn(3, 4, device=device)
+    b = torch.randn(4, 5, device=device)
+
+    initial = tensor_join_cache_info()
+    tensor_join("ab,bc->ac", a, b)
+    after_first = tensor_join_cache_info()
+    tensor_join("ab,bc->ac", a, b)
+    after_second = tensor_join_cache_info()
+
+    assert after_first.misses == initial.misses + 1
+    assert after_second.hits == after_first.hits + 1
