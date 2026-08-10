@@ -11,7 +11,7 @@ on:
 jobs:
   triton-profile:
     name: Run Triton profiler on GPU hosted runner
-    runs-on: magic-cabinet-mage-gpu
+    runs-on: gpu-t4-4-core
     timeout-minutes: 120
 
     steps:
