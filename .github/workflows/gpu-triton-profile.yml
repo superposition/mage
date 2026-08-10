@@ -12,9 +12,7 @@ jobs:
   triton-profile:
     name: Run Triton profiler on GPU hosted runner
     runs-on:
-      - self-hosted
-      - linux
-      - x64
+      group: Default
     timeout-minutes: 120
 
     steps:
