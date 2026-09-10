@@ -114,12 +114,20 @@ The run stopped after eight consecutive rejections. Final parameters:
 thread_tile: 4x4}`.
 
 The confirmation step re-measured the final incumbent against the committed kernel in
-fresh processes: **78.70 µs against 82.29 µs (+4.36%)**. An independent re-measurement in
-three further alternating rounds, with the final parameters rendered into the generated
-slot and the committed kernels reached through the no-variant path, read **78.85 µs
-against 82.93 µs (+4.94%)**, maximum absolute error 0.0, sample-to-sample spread within
-0.1 µs. The baseline itself reads 81.9-82.9 µs across these sessions, which bounds how
-much of the difference any single pairing can attribute.
+fresh processes and read 78.70 against 82.29 µs (+4.36%); a second confirmation read 78.85
+against 82.93 µs (+4.94%). **Both of those overstate the gain.** Re-measured with four
+unrecorded warm-up pairs and eight interleaved rounds of 100 iterations each, in a fresh
+input directory per arm, the same pair gives **8 of 8 rounds in favour of the retained
+kernel, median +2.47%, mean +2.64%, range +2.46% to +3.70%, standard deviation 0.40%**,
+with maximum absolute error 0.0.
+
+The difference is a systematic property of the machine, not noise: in that session the
+committed kernel read 77.82 µs on the first measurement after an idle period and 82.94 µs
+once its clocks had settled, a 6% swing in one direction. A three-round confirmation that
+starts cold therefore reads a larger gain than the configuration has. The accepted steps
+are unaffected in direction: their ratios (0.778, 0.912, 0.924) are an order of magnitude
+outside that bias, and the same three steps were accepted with a different seed. Only the
+quoted total needed correcting, from about 5% to about 2.5%.
 
 Ledger and summary for the matrix-multiply run are committed under
 `docs/assets/results/evolution-loop/matmul-ledger.jsonl` and `matmul-summary.json`.
@@ -203,9 +211,15 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
 - The retained configuration is a candidate, not a published result: it has not been
   captured with Nsight, has not been confirmed in a fresh session, and does not carry the
   correctness enumeration (fallback kernels, edge shapes) that the mage-003 record does.
+- A short confirmation overstates a gain. The loop compares the fastest observed round on
+  each arm and refuses to judge a generation whose control drifts more than 3%, which
+  catches reversals but not the clock boost of a first measurement. Warm-up pairs before
+  the measured rounds are required, and a quoted total needs more than three rounds.
 
 ## Next
 
+- Make the confirmation step use warm-up pairs and more rounds, so a run cannot quote a
+  gain its own protocol inflated.
 - Nsight-capture the retained configuration so the claim can be stated in kernel time.
 - Feed the loop the profiler's own output (Mage already captures Systems and Compute
   reports) so proposals can be diagnosis-driven rather than order-driven.
