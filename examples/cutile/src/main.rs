@@ -18,8 +18,11 @@ use std::{error::Error, fs, path::Path, sync::Arc};
 
 /// Tile shapes. A partition shape is a compile-time tile shape in cuTile and
 /// part of the JIT specialization key, so each run keeps to one shape.
-const MATMUL_M: usize = 16;
-const MATMUL_N: usize = 16;
+// The retained matmul tile is the winner of the bounded sweep recorded in
+// docs/experiments/mage-004.md: 16x16x8 -> 738.0 us, 64x64x32 -> 255.4 us,
+// 128x64x8 -> 201.5 us of event span on 1024^3, all with the same output.
+const MATMUL_M: usize = 128;
+const MATMUL_N: usize = 64;
 const MATMUL_K: usize = 8;
 const GELU_ROWS: usize = 8;
 const GELU_COLS: usize = 128;
@@ -411,14 +414,34 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// Tile shapes can be overridden per run (`CUTILE_MATMUL_TILE=BM,BN,BK`) so a
+/// sweep changes the specialization without editing the source. Every value
+/// must be a power of two: the assembler rejects other tile dimensions.
+fn matmul_tiles() -> (usize, usize, usize) {
+    let parsed = std::env::var("CUTILE_MATMUL_TILE")
+        .ok()
+        .and_then(|value| {
+            let parts: Vec<usize> = value
+                .split(',')
+                .map(|part| part.trim().parse().unwrap_or(0))
+                .collect();
+            (parts.len() == 3).then_some((parts[0], parts[1], parts[2]))
+        });
+    match parsed {
+        Some(tiles) if tiles.0 > 0 && tiles.1 > 0 && tiles.2 > 0 => tiles,
+        _ => (MATMUL_M, MATMUL_N, MATMUL_K),
+    }
+}
+
 fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+    let (tile_m, tile_n, tile_k) = matmul_tiles();
     let (m, n, k) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
     let a = read_f32(&dir.join("a.bin"), product(&[m, k])?)?;
     let b = read_f32(&dir.join("b.bin"), product(&[k, n])?)?;
     let (m_pad, n_pad, k_pad) = (
-        m.div_ceil(MATMUL_M) * MATMUL_M,
-        n.div_ceil(MATMUL_N) * MATMUL_N,
-        k.div_ceil(MATMUL_K) * MATMUL_K,
+        m.div_ceil(tile_m) * tile_m,
+        n.div_ceil(tile_n) * tile_n,
+        k.div_ceil(tile_k) * tile_k,
     );
     let a_pad = pad_rows(&a, m, k, m_pad, k_pad);
     let b_pad = pad_rows(&b, k, n, k_pad, n_pad);
@@ -435,9 +458,9 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Resul
         .into();
     let mut z: Tensor<f32> = api::zeros::<f32>(&[m_pad, n_pad]).sync_on(stream)?;
     let generics = vec![
-        MATMUL_M.to_string(),
-        MATMUL_N.to_string(),
-        MATMUL_K.to_string(),
+        tile_m.to_string(),
+        tile_n.to_string(),
+        tile_k.to_string(),
         k_pad.to_string(),
     ];
     let samples = harness.time(
@@ -445,7 +468,7 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Resul
         manifest.iterations,
         capture_requested,
         &mut || {
-            let _ = kernels::matmul((&mut z).partition([MATMUL_M, MATMUL_N]), &x, &y)
+            let _ = kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
                 .generics(generics.clone())
                 .sync_on(stream)?;
             Ok(())
@@ -463,7 +486,7 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Resul
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"m": MATMUL_M, "n": MATMUL_N, "k": MATMUL_K},
+        serde_json::json!({"tiles": {"m": tile_m, "n": tile_n, "k": tile_k},
                            "padded": [m_pad, n_pad, k_pad]}),
     )
 }

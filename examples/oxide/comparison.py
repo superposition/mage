@@ -46,7 +46,8 @@ def run(args):
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "gpu_state_before": gpu_state(), "results": [],
     }
-    for op, dims in DEFAULTS.items():
+    selected = {op: dims for op, dims in DEFAULTS.items() if not args.ops or op in args.ops}
+    for op, dims in selected.items():
         directory = args.output / op
         generate(directory, op, dims, warmup=args.warmup, iterations=args.iterations)
         _, python_fn = reference(directory)
@@ -94,6 +95,7 @@ if __name__ == "__main__":
     parser.add_argument("--binary", type=Path, help="override the implementation's binary path")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--experiment", default="mage-001", help="result namespace in results.json")
+    parser.add_argument("--ops", nargs="+", choices=sorted(DEFAULTS), help="restrict the run to these operations")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=25)

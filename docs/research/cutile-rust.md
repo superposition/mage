@@ -1,6 +1,12 @@
 # Adding a cuTile Rust track
 
-Status: **planned; the toolkit prerequisite is the only thing missing** (2026-09-10).
+Status: **four of the five operations are ported and measured** (2026-09-10).
+The toolkit gate passed, `examples/cutile` builds and runs, and
+[mage-004](../experiments/mage-004.md) holds the values: the tile kernels are
+ahead of cuda-oxide on GPU time for bias + GELU, level on layer norm, 2.2× behind
+on matrix multiply and 1.5× behind on triangle contraction, with the retained
+matmul tile chosen by a twelve-configuration sweep. Neighbor aggregation, the
+launch path, and autotuning remain open; see [Open work](#open-work).
 
 [cuTile Rust](https://github.com/NVlabs/cutile-rs) is NVlabs' second Rust-to-CUDA
 stack, alongside [cuda-oxide](https://github.com/NVlabs/cuda-oxide). Where
@@ -212,23 +218,28 @@ profiling commands next to the oxide ones.
 | The tile model cannot express CSR gather | Phase 2 | `*_tko` raw pointers, measured against the safe path; report the cost. |
 | The results differ from oxide by less than the harness resolves | Phase 3 | The difference is the finding; both binaries are retained. |
 
-## Next: Phase 1, matmul in `examples/cutile`
+## Open work
+
+| Item | State | Next test |
+| --- | --- | --- |
+| Neighbor aggregation (CSR gather) | Not ported: the tile model has no scalar load from a device array, and the loop bound is per-row data | `load_ptr_tko` raw-pointer kernel, measured against the safe path; the cost of the escape hatch is part of the result |
+| The launch path | Not measured: the harness serializes submission per iteration, which prices the lazy runtime's host work rather than its queueing | Single launch, a batch divided by repetitions, and CUDA graph replay, with warmup excluded |
+| Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region |
+| Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
+
+## Where the results live
+
+- [mage-004](../experiments/mage-004.md) — method, event spans, kernel times,
+  the tile sweep, and what the numbers do not establish.
+- `artifacts/mage-004-comparison/results.json` — the retained comparison run,
+  three rotating rounds, every sample and every full-element check.
+- `artifacts/cutile-nsys-final/<op>/` — one Nsight Systems capture per
+  operation, 100 launches each.
 
 ```bash
-# scaffold the crate beside the oxide one, pinned to the stable toolchain
-mkdir -p examples/cutile/src
-# Cargo.toml: cutile = "=0.3.1", cuda-core = "=0.3.1", serde, serde_json, libloading
-# rust-toolchain.toml: channel = "1.98.1"
-
 source scripts/cutile-env.sh
-cd examples/cutile && cargo build --release
-../../mage profile-exec --backend nsys --capture-range cuda \
-  --output-dir artifacts/cutile-trace -- \
-  examples/cutile/target/release/mage-cutile artifacts/mage-001/matmul \
-  --iterations 100 --capture
+cd examples/cutile && cargo build --release && cd ../..
+.venv/bin/python examples/oxide/comparison.py --implementation cutile \
+  --ops matmul gelu layernorm triangle --experiment mage-004 \
+  --output artifacts/mage-004-comparison --rounds 3 --iterations 100 --warmup 25
 ```
-
-The first target is one operation end to end: the same input files, the same
-full-output check against PyTorch, and per-launch kernel durations out of Nsight
-Systems. Everything after that reuses the harness the oxide track already
-established.

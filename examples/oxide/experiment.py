@@ -156,9 +156,15 @@ def validate(directory):
     return result
 
 
-def run_suite(binary, output, small=False, implementation="oxide", experiment_id="mage-001"):
+def run_suite(binary, output, small=False, implementation="oxide", experiment_id="mage-001", ops=None):
     precision()
-    cases = [(op, dims, False, op) for op, dims in (SMALL if small else DEFAULTS).items()]
+    selected = SMALL if small else DEFAULTS
+    if ops:
+        unknown = sorted(set(ops) - set(DEFAULTS))
+        if unknown:
+            raise SystemExit(f"unknown operations {', '.join(unknown)}; expected some of {', '.join(DEFAULTS)}")
+        selected = {op: dims for op, dims in selected.items() if op in ops}
+    cases = [(op, dims, False, op) for op, dims in selected.items()]
     if small:
         cases += [("layernorm", [2, 1], True, "layernorm-constant-one"),
                   ("layernorm", [4, 768], True, "layernorm-constant"),
@@ -208,10 +214,12 @@ def main():
     parser.add_argument("--binary", type=Path, help="override the implementation's binary path")
     parser.add_argument("--output", type=Path, default=Path("artifacts/mage-001"))
     parser.add_argument("--experiment", default="mage-001", help="result namespace in results.json")
+    parser.add_argument("--ops", nargs="+", choices=sorted(DEFAULTS), help="restrict the run to these operations")
     parser.add_argument("--small", action="store_true")
     args = parser.parse_args()
     binary = args.binary or resolve_implementation(args.implementation)["binary"]
-    run_suite(binary.resolve(), args.output.resolve(), args.small, args.implementation, args.experiment)
+    run_suite(binary.resolve(), args.output.resolve(), args.small, args.implementation,
+              args.experiment, args.ops)
 
 
 if __name__ == "__main__":
