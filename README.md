@@ -290,6 +290,7 @@ Matmul Benchmarks (fp16)
 mage demo              # Quick correctness check
 mage bench [op]        # Run benchmarks (all, add, matmul, relu, softmax, backward)
 mage profile script.py # Profile a Python script
+mage profile -m pkg.module:fn  # Profile a function
 
 # Profile options
 mage profile script.py --backend triton   # Default, no permissions needed
@@ -297,6 +298,7 @@ mage profile script.py --backend nsys     # NVIDIA Nsight Systems
 mage profile script.py --backend ncu      # NVIDIA Nsight Compute
 mage profile script.py --analyze          # Include memory analysis
 mage profile script.py --columns kernel,duration,grid
+mage profile -m pkg.module:fn --call-args '[1, 2]' --warmup 5 --iterations 20
 ```
 
 ## Programmatic Profiling
