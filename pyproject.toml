@@ -6,6 +6,10 @@ build-backend = "hatchling.build"
 name = "mage"
 version = "0.1.0"
 description = "GPU profiler TUI for Triton/CUDA kernels with nsys/ncu integration"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Superposition" }]
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
@@ -14,6 +18,11 @@ dependencies = [
     "numpy>=2.2.6",
     "textual>=6.8.0",
 ]
+
+[project.urls]
+Homepage = "https://superposition.github.io/mage/"
+Repository = "https://github.com/superposition/mage"
+Journal = "https://superposition.github.io/"
 
 [project.scripts]
 mage = "mage.cli:main"
