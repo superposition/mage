@@ -16,6 +16,26 @@ Start with a PyTorch expression, then give the same calculation to a custom Trit
 
 {% include profile-comparison.html %}
 
+<section class="profile-comparison" aria-label="Kernel time and time around the call">
+  <figure class="profile-plot">
+    <picture>
+      <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-001/comparison-views-mobile.svg' | relative_url }}">
+      <img src="{{ '/assets/figures/mage-001/comparison-views.svg' | relative_url }}" width="740" height="650"
+           alt="GPU kernel time and time around the call per operation: for Bias + GELU, Triton has the shorter kernel time while Rust has the shorter event span; PyTorch has the shortest kernel time for matrix multiplication and triangle contraction.">
+    </picture>
+    <figcaption>
+      <p>Both views in one figure. The top row is time inside the kernels; the bottom row is time around the call.
+      Each column has its own scale, so implementations compare within a column. Bias + GELU is where the two
+      views disagree.</p>
+      <div class="profile-links">
+        <a href="{{ '/assets/figures/mage-001/comparison-views.svg' | relative_url }}" download>Download SVG</a>
+        <a href="{{ '/assets/figures/mage-001/comparison-views.png' | relative_url }}" download>PNG</a>
+        <a href="https://github.com/superposition/mage/blob/master/docs/experiments/mage-001-comparison.md">Data & method ↗</a>
+      </div>
+    </figcaption>
+  </figure>
+</section>
+
 **The surprising part is that the apparent winner can change with the measurement.** For bias + GELU, Rust has the shorter event span around the call: 13.0 µs against Triton's 24.3 µs. In the separate profile, Triton's kernel itself takes 7.9 µs against Rust's 11.2 µs. The launch path is part of the system we are measuring.
 
 These are separate runs with different launch rhythms, so subtracting one number from another would not isolate Python overhead. They give us a better question to test: does the advantage survive when the kernel runs inside the actual application?

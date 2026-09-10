@@ -116,6 +116,69 @@ def plot(data, metric, mobile):
     plt.close(fig)
 
 
+VIEWS = (("kernel", "GPU kernel time"), ("event", "Time around the call"))
+
+
+def plot_views(data, mobile):
+    """Both views in one figure: kernel time and time around the call, side by side.
+
+    The reversal in Bias + GELU is the point of this figure, so the two measurements
+    that disagree for the same operation sit next to each other.
+    """
+    if mobile:
+        fig, axes = plt.subplots(len(data["rows"]) * len(VIEWS), 1, figsize=(3.65, 16.5), dpi=100)
+        fig.subplots_adjust(left=.33, right=.97, top=.965, bottom=.028, hspace=1.15)
+    else:
+        fig, axes = plt.subplots(len(VIEWS), len(data["rows"]), figsize=(15.6, 7.4), dpi=100,
+                                 gridspec_kw={"wspace": .55, "hspace": .52})
+        fig.subplots_adjust(left=.032, right=.995, top=.855, bottom=.085)
+    fig.patch.set_facecolor(BG)
+    fig.text(.01, .985, "Kernel time and time around the call", color=INK,
+             fontsize=12 if mobile else 15, weight="bold", va="top")
+    fig.text(.01, .962 if mobile else .918, "The same five operations measured inside the kernel and around the call.",
+             color=MUTED, fontsize=8.4 if mobile else 9.6, va="top")
+    fig.text(.01, .006, "RTX 4090 · FP32 · each column has its own scale", color=MUTED,
+             fontsize=8 if mobile else 9, va="bottom")
+    for column, row in enumerate(data["rows"]):
+        for panel, (metric, panel_title) in enumerate(VIEWS):
+            ax = axes[column * len(VIEWS) + panel] if mobile else axes[panel][column]
+            values = [row["measurements"][lang][metric] for lang in LANGUAGES]
+            extent = max(row["measurements"][lang]["event_max"] if metric == "event" else values[i]
+                         for i, lang in enumerate(LANGUAGES))
+            ax.set_xlim(0, extent * (1.33 if mobile else 1.21))
+            ax.set_ylim(2.65, -.6)
+            for y, (lang, value) in enumerate(zip(LANGUAGES, values)):
+                ax.barh(y, value, height=.52, color=COLORS[lang], zorder=3)
+                edge = value
+                if metric == "event":
+                    low, high = (row["measurements"][lang][f"event_{s}"] for s in ("min", "max"))
+                    ax.errorbar(value, y, xerr=[[value - low], [high - value]], color=INK,
+                                capsize=2.5, linewidth=1, zorder=4)
+                    edge = high
+                ax.annotate(f"{value:.1f}", (edge, y), xytext=(5, 0), textcoords="offset points",
+                            ha="left", va="center", color=INK, fontsize=9.5 if mobile else 11)
+            ax.set_yticks(range(3), [DISPLAY[lang] for lang in LANGUAGES], color=MUTED,
+                          fontsize=8.5 if mobile else 10)
+            ax.set_title(f"{row['label']} · {panel_title.lower()}" if mobile else row["label"],
+                         loc="left", color=INK, fontsize=10 if mobile else 12, pad=6, weight="medium")
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=2 if mobile else 4))
+            ax.tick_params(axis="both", length=0, colors=MUTED, labelsize=8 if mobile else 9)
+            ax.grid(axis="x", color=RULE, linewidth=.6, zorder=0)
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            ax.set_facecolor(BG)
+    name = f"comparison-views{'-mobile' if mobile else ''}"
+    fig.savefig(OUT / f"{name}.svg", metadata={"Date": None, "Description":
+        "RTX 4090; same FP32 inputs. GPU kernel time comes from a separate Nsight Systems capture; the "
+        "event spans are means over three rotating rounds. Each column has its own zero-based scale. "
+        "See comparison-results.json and comparison-profiles.json for evidence."})
+    svg = OUT / f"{name}.svg"
+    svg.write_bytes(b"\n".join(line.rstrip() for line in svg.read_bytes().splitlines()) + b"\n")
+    if not mobile:
+        fig.savefig(OUT / f"{name}.png", dpi=200)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     # Embed glyph outlines so downloads render identically without local fonts.
     # The page provides descriptive alt text and an accessible numeric table.
@@ -125,6 +188,8 @@ if __name__ == "__main__":
     for metric in METRICS:
         for mobile in (False, True):
             plot(data, metric, mobile)
+    for mobile in (False, True):
+        plot_views(data, mobile)
     target = ROOT / "docs/_data/profile_comparison.json"
     target.parent.mkdir(exist_ok=True)
     target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
