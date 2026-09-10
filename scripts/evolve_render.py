@@ -23,7 +23,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -375,7 +374,6 @@ def render_module(
     context: dict[str, object] = {
         "BODIES": "\n".join(bodies),
         "GENERATION": generation,
-        "RENDERED_AT": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "WRAPPER_SHA256": _hash_file(WRAPPER_TEMPLATE),
         "BODY_SHA256": _hash_file(BODY_TEMPLATE),
         "BEST_BM": best_mm["BM"],
