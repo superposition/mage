@@ -1,0 +1,277 @@
+    /// {{ROLE}} matmul: {{BM}}x{{BN}} block tile, {{TM}}x{{TN}} per thread, K step {{BK}}.
+    ///
+    /// Generated from candidates_body.rs.tmpl; params {{PARAMS_JSON}}.
+    #[kernel]
+    pub fn matmul_{{SUFFIX}}(
+        n: u32,
+        k: u32,
+        a: &[f32],
+        b: &[f32],
+        mut out: DisjointSlice<f32, thread::Runtime2DIndex>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+
+        static mut AT: SharedArray<f32, {{AT_LEN}}, 16> = SharedArray::UNINIT;
+        static mut BS: SharedArray<f32, {{BS_LEN}}, 16> = SharedArray::UNINIT;
+        let tx = thread::threadIdx_x() as usize;
+        let ty = thread::threadIdx_y() as usize;
+        let tid = ty * {{TX}} + tx;
+        let kk = k as usize;
+        let nn = n as usize;
+        let row0 = thread::blockIdx_y() as usize * {{BM}};
+        let col0 = thread::blockIdx_x() as usize * {{BN}};
+        let mut acc = [[0.0f32; {{TN}}]; {{TM}}];
+        let mut step = 0usize;
+        while step < kk {
+            let b_quads = unsafe { core::ptr::addr_of_mut!(BS) }.cast::<F32x4>();
+            let mut pass = 0usize;
+            while pass < {{PASSES}} {
+                let q = tid + pass * {{THREADS}};
+//>> if SHARED_ROWCOL
+                let row = q / {{A_QUADS_PER_ROW}};
+                let col = (q % {{A_QUADS_PER_ROW}}) * 4;
+//>> end
+//>> if GUARDED_A
+                if q < {{A_QUADS}} {
+//>> end
+                let a_start = (row0 + {{A_ROW}}) * kk + step + {{A_COL}};
+//>> if QUAD_STAGE
+                if let Some(quad) = vector::as_vectors::<F32x4>(&a[a_start..a_start + 4]) {
+                    let v = quad[0].as_slice();
+//>> if TRANSPOSE_A
+                    // Store transposed (k-major) so each thread's {{TM}} rows are contiguous.
+                    unsafe {
+                        AT[({{A_COL}} + 0) * {{AT_STRIDE}} + {{A_ROW}}] = v[0];
+                        AT[({{A_COL}} + 1) * {{AT_STRIDE}} + {{A_ROW}}] = v[1];
+                        AT[({{A_COL}} + 2) * {{AT_STRIDE}} + {{A_ROW}}] = v[2];
+                        AT[({{A_COL}} + 3) * {{AT_STRIDE}} + {{A_ROW}}] = v[3];
+                    }
+//>> else
+                    unsafe {
+                        AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 0] = v[0];
+                        AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 1] = v[1];
+                        AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 2] = v[2];
+                        AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 3] = v[3];
+                    }
+//>> end
+                }
+//>> else
+//>> if TRANSPOSE_A
+                unsafe {
+                    AT[({{A_COL}} + 0) * {{AT_STRIDE}} + {{A_ROW}}] = a[a_start + 0];
+                    AT[({{A_COL}} + 1) * {{AT_STRIDE}} + {{A_ROW}}] = a[a_start + 1];
+                    AT[({{A_COL}} + 2) * {{AT_STRIDE}} + {{A_ROW}}] = a[a_start + 2];
+                    AT[({{A_COL}} + 3) * {{AT_STRIDE}} + {{A_ROW}}] = a[a_start + 3];
+                }
+//>> else
+                unsafe {
+                    AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 0] = a[a_start + 0];
+                    AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 1] = a[a_start + 1];
+                    AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 2] = a[a_start + 2];
+                    AT[{{A_ROW}} * {{AT_STRIDE}} + {{A_COL}} + 3] = a[a_start + 3];
+                }
+//>> end
+//>> end
+//>> if GUARDED_A
+                }
+//>> end
+//>> if GUARDED_B
+                if q < {{B_QUADS}} {
+//>> end
+                let b_start = (step + {{B_ROW}}) * nn + col0 + {{B_COL}};
+//>> if QUAD_STAGE
+                if let Some(quad) = vector::as_vectors::<F32x4>(&b[b_start..b_start + 4]) {
+                    unsafe {
+                        *b_quads.add({{B_ROW}} * {{B_QUADS_PER_ROW}} + {{B_COL}} / 4) = quad[0];
+                    }
+                }
+//>> else
+                unsafe {
+                    BS[{{B_ROW}} * {{B_QUADS_PER_ROW}} * 4 + {{B_COL}} + 0] = b[b_start + 0];
+                    BS[{{B_ROW}} * {{B_QUADS_PER_ROW}} * 4 + {{B_COL}} + 1] = b[b_start + 1];
+                    BS[{{B_ROW}} * {{B_QUADS_PER_ROW}} * 4 + {{B_COL}} + 2] = b[b_start + 2];
+                    BS[{{B_ROW}} * {{B_QUADS_PER_ROW}} * 4 + {{B_COL}} + 3] = b[b_start + 3];
+                }
+//>> end
+//>> if GUARDED_B
+                }
+//>> end
+                pass += 1;
+            }
+            thread::sync_threads();
+            let mut i = 0usize;
+            while i < {{BK}} {
+//>> if TRANSPOSE_A
+                let a_base = core::ptr::addr_of!(AT).cast::<F32x4>();
+                let mut av = [0.0f32; {{TM}}];
+                let mut gr = 0usize;
+                while gr < {{TM_QUADS}} {
+                    // One 128-bit shared read for four of the rows this thread owns.
+                    let lanes = unsafe {
+                        (*a_base.add(i * {{AT_QUAD_STRIDE}} + ty * {{TM_QUADS}} + gr)).0
+                    };
+                    av[gr * 4 + 0] = lanes[0];
+                    av[gr * 4 + 1] = lanes[1];
+                    av[gr * 4 + 2] = lanes[2];
+                    av[gr * 4 + 3] = lanes[3];
+                    gr += 1;
+                }
+//>> else
+                let mut av = [0.0f32; {{TM}}];
+                let mut r = 0usize;
+                while r < {{TM}} {
+                    unsafe {
+                        av[r] = AT[(ty * {{TM}} + r) * {{AT_STRIDE}} + i];
+                    }
+                    r += 1;
+                }
+//>> end
+                let base = core::ptr::addr_of!(BS).cast::<F32x4>();
+                let mut bv = [0.0f32; {{TN}}];
+                let mut gc = 0usize;
+                while gc < {{TN_QUADS}} {
+                    let lanes = unsafe {
+                        (*base.add(i * {{B_QUADS_PER_ROW}} + tx * {{TN_QUADS}} + gc)).0
+                    };
+                    bv[gc * 4 + 0] = lanes[0];
+                    bv[gc * 4 + 1] = lanes[1];
+                    bv[gc * 4 + 2] = lanes[2];
+                    bv[gc * 4 + 3] = lanes[3];
+                    gc += 1;
+                }
+                let mut r = 0usize;
+                while r < {{TM}} {
+                    let mut c = 0usize;
+                    while c < {{TN}} {
+                        acc[r][c] += av[r] * bv[c];
+                        c += 1;
+                    }
+                    r += 1;
+                }
+                i += 1;
+            }
+            thread::sync_threads();
+            step += {{BK}};
+        }
+        // SAFETY: the host validated `m * n` output elements and launched exactly
+        // one {{BM}}x{{BN}} tile per block, so every written cell is inside the
+        // buffer and belongs to this block alone.
+        let out_ptr = out.as_mut_ptr();
+        let mut r = 0usize;
+        while r < {{TM}} {
+            let mut c = 0usize;
+            while c < {{TN}} {
+                unsafe {
+                    *out_ptr.add((row0 + ty * {{TM}} + r) * nn + col0 + tx * {{TN}} + c) = acc[r][c];
+                }
+                c += 1;
+            }
+            r += 1;
+        }
+    }
+
+    /// {{ROLE}} layer norm: {{LN_WPR}} warp(s) per row, {{LN_ROWS}} rows per block.
+    ///
+    /// Generated from candidates_body.rs.tmpl; params {{PARAMS_JSON}}.
+    #[kernel]
+    pub fn layernorm_{{SUFFIX}}(
+        width: u32,
+        rows: u32,
+        x: &[f32],
+        gamma: &[f32],
+        beta: &[f32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+        use cuda_device::warp;
+
+//>> if LN_WPR > 1
+        static mut PARTIAL: SharedArray<f32, {{PARTIAL_LEN}}> = SharedArray::UNINIT;
+//>> end
+        let d = width as usize;
+        let tid = thread::threadIdx_x() as usize;
+        let lane = tid & 31;
+        let warp = tid >> 5;
+        let part = warp % {{LN_WPR}};
+        let row = thread::blockIdx_x() as usize * {{LN_ROWS}} + warp / {{LN_WPR}};
+        if row >= rows as usize {
+            return;
+        }
+        let base = row * d;
+        let Some(quads) = vector::as_vectors::<F32x4>(&x[base..base + d]) else {
+            return;
+        };
+        let Some(gamma_quads) = vector::as_vectors::<F32x4>(gamma) else {
+            return;
+        };
+        let Some(beta_quads) = vector::as_vectors::<F32x4>(beta) else {
+            return;
+        };
+        // A warp owns the contiguous quad range [start, end) of its row, so a row
+        // split across warps can never count an element twice. Sharing by whole
+        // 32-lane steps alone would overlap whenever span is not a multiple of 32.
+        let span = quads.len().div_ceil({{LN_WPR}});
+        let start = part * span;
+        let end = core::cmp::min(start + span, quads.len());
+
+        let mut sum = 0.0f32;
+        let mut squares = 0.0f32;
+        let mut q = start + lane;
+        while q < end {
+            let v = quads[q].as_slice();
+            sum += v[0] + v[1] + v[2] + v[3];
+            squares += v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
+            q += 32;
+        }
+        let mut offset = 16u32;
+        while offset > 0 {
+            sum += warp::shuffle_down_f32(sum, offset);
+            squares += warp::shuffle_down_f32(squares, offset);
+            offset >>= 1;
+        }
+//>> if LN_WPR > 1
+        if lane == 0 {
+            unsafe {
+                PARTIAL[warp * 2] = sum;
+                PARTIAL[warp * 2 + 1] = squares;
+            }
+        }
+        thread::sync_threads();
+        let row_warps = (warp / {{LN_WPR}}) * {{LN_WPR}};
+        let mut total = 0.0f32;
+        let mut total_squares = 0.0f32;
+        let mut w = 0usize;
+        while w < {{LN_WPR}} {
+            total += unsafe { PARTIAL[(row_warps + w) * 2] };
+            total_squares += unsafe { PARTIAL[(row_warps + w) * 2 + 1] };
+            w += 1;
+        }
+//>> else
+        // After the down-shuffle only lane 0 holds the warp total; broadcast it.
+        let total = warp::shuffle_f32(sum, 0);
+        let total_squares = warp::shuffle_f32(squares, 0);
+//>> end
+        let mean = total / d as f32;
+        let variance = total_squares / d as f32 - mean * mean;
+        let inv = 1.0 / cuda_device::float::sqrt_rn_f32(variance + 1e-5);
+
+        // SAFETY: the host validated `rows * width` output elements and each warp
+        // owns the disjoint share of row `base`, so this view aliases no other warp.
+        let out_row = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().add(base), d) };
+        let Some(out_quads) = vector::as_vectors_mut::<F32x4>(out_row) else {
+            return;
+        };
+        q = start + lane;
+        while q < end {
+            let v = quads[q].as_slice();
+            let gv = gamma_quads[q].as_slice();
+            let bv = beta_quads[q].as_slice();
+            out_quads[q] = F32x4::new([
+                (v[0] - mean) * inv * gv[0] + bv[0],
+                (v[1] - mean) * inv * gv[1] + bv[1],
+                (v[2] - mean) * inv * gv[2] + bv[2],
+                (v[3] - mean) * inv * gv[3] + bv[3],
+            ]);
+            q += 32;
+        }
+    }
