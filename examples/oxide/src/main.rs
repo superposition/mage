@@ -175,6 +175,147 @@ mod kernels {
         }
     }
 
+    /// Double-buffered matmul: `cp.async` copies the next K tile while this one computes.
+    ///
+    /// Same tiles and register shape as `tiled_matmul_registers`, but the global to
+    /// shared copies are issued asynchronously into two buffers, so the latency of a
+    /// tile load overlaps the multiply-adds of the tile before it. The transposed A
+    /// tile uses four-byte copies (its shared destination is scattered); the B tile
+    /// uses sixteen-byte copies.
+    #[kernel]
+    pub fn tiled_matmul_pipeline(
+        n: u32,
+        k: u32,
+        a: &[f32],
+        b: &[f32],
+        mut out: DisjointSlice<f32, thread::Runtime2DIndex>,
+    ) {
+        use cuda_device::async_copy::{cp_async_ca_16, cp_async_ca_4, cp_async_commit_group,
+                                      cp_async_wait_group};
+        use cuda_device::vector::F32x4;
+
+        const BK: usize = 32;
+        // Two buffers: 32 k-rows x 68 stride each, and 32 rows x 64 columns each.
+        static mut AT: SharedArray<f32, 4352, 16> = SharedArray::UNINIT;
+        static mut BS: SharedArray<f32, 4096, 16> = SharedArray::UNINIT;
+        let tx = thread::threadIdx_x() as usize;
+        let ty = thread::threadIdx_y() as usize;
+        let tid = ty * 16 + tx;
+        let kk = k as usize;
+        let nn = n as usize;
+        let row0 = thread::blockIdx_y() as usize * 64;
+        let col0 = thread::blockIdx_x() as usize * 64;
+        let tiles = kk.div_ceil(BK);
+
+        let at_u32 = unsafe { core::ptr::addr_of_mut!(AT) }.cast::<u32>();
+        let bs_u32 = unsafe { core::ptr::addr_of_mut!(BS) }.cast::<u32>();
+        let a_u32 = a.as_ptr().cast::<u32>();
+        let b_u32 = b.as_ptr().cast::<u32>();
+
+        macro_rules! stage {
+            ($buf:expr, $tile:expr) => {{
+                let buf = $buf;
+                let tile = $tile;
+                let k_start = tile * BK;
+                // A: 64 rows x 32 columns, stored transposed with stride 68.
+                let asrc = a_u32 as usize;
+                let adst = unsafe { at_u32.add(buf * 2176) } as usize;
+                let mut pass = 0usize;
+                while pass < 8 {
+                    let idx = tid + pass * 256;
+                    let row = idx / 32;
+                    let col = idx % 32;
+                    unsafe {
+                        cp_async_ca_4(
+                            (adst + (col * 68 + row) * 4) as *mut u32,
+                            (asrc + ((row0 + row) * kk + k_start + col) * 4) as *const u32,
+                        );
+                    }
+                    pass += 1;
+                }
+                // B: 32 rows x 64 columns, two 16-byte copies per thread.
+                let bsrc = b_u32 as usize;
+                let bdst = unsafe { bs_u32.add(buf * 2048) } as usize;
+                let mut q = 0usize;
+                while q < 2 {
+                    let quad = tid + q * 256;
+                    let row = quad / 16;
+                    let colq = quad % 16;
+                    unsafe {
+                        cp_async_ca_16(
+                            (bdst + (row * 64 + colq * 4) * 4) as *mut u32,
+                            (bsrc + ((k_start + row) * nn + col0 + colq * 4) * 4) as *const u32,
+                        );
+                    }
+                    q += 1;
+                }
+                unsafe { cp_async_commit_group() };
+            }};
+        }
+
+        let mut acc = [[0.0f32; 4]; 4];
+        // One A buffer is 2176 f32 = 544 quads; one B buffer is 2048 f32 = 512 quads.
+        macro_rules! consume {
+            ($buf:expr) => {{
+                let buf = $buf;
+                let a_base = unsafe { core::ptr::addr_of!(AT).cast::<F32x4>().add(buf * 544) };
+                let b_base = unsafe { core::ptr::addr_of!(BS).cast::<F32x4>().add(buf * 512) };
+                let mut i = 0usize;
+                while i < BK {
+                    let a_lanes = unsafe { (*a_base.add(i * 17 + ty)).0 };
+                    let b_lanes = unsafe { (*b_base.add(i * 16 + tx)).0 };
+                    let mut r = 0usize;
+                    while r < 4 {
+                        let av = a_lanes[r];
+                        let mut c = 0usize;
+                        while c < 4 {
+                            acc[r][c] += av * b_lanes[c];
+                            c += 1;
+                        }
+                        r += 1;
+                    }
+                    i += 1;
+                }
+            }};
+        }
+
+        stage!(0, 0);
+        if tiles > 1 {
+            stage!(1, 1);
+        }
+        // Every tile but the last: wait until the buffer for this tile is the newest
+        // completed group (one group may still be in flight for the tile after it).
+        let mut tile = 0usize;
+        while tile + 1 < tiles {
+            unsafe { cp_async_wait_group(1) };
+            thread::sync_threads();
+            consume!(tile % 2);
+            thread::sync_threads();
+            if tile + 2 < tiles {
+                stage!(tile % 2, tile + 2);
+            }
+            tile += 1;
+        }
+        unsafe { cp_async_wait_group(0) };
+        thread::sync_threads();
+        consume!((tiles - 1) % 2);
+        // SAFETY: the host validated `m * n` output elements and launched exactly one
+        // 64x64 tile per block, so every written cell is inside the buffer and belongs
+        // to this block alone.
+        let out_ptr = out.as_mut_ptr();
+        let mut r = 0usize;
+        while r < 4 {
+            let mut c = 0usize;
+            while c < 4 {
+                unsafe {
+                    *out_ptr.add((row0 + ty * 4 + r) * nn + col0 + tx * 4 + c) = acc[r][c];
+                }
+                c += 1;
+            }
+            r += 1;
+        }
+    }
+
     #[kernel]
     pub fn bias_gelu(width: u32, x: &[f32], bias: &[f32], mut out: DisjointSlice<f32>) {
         let index = thread::index_1d();
@@ -782,7 +923,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     // below and the timing record read this, so they cannot disagree.
     let committed_kernel = match manifest.op.as_str() {
         "matmul" => {
-            if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 64 == 0 {
+            if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 32 == 0 {
+                // The pipelined kernel covers a 32-deep K step.
+                "tiled_matmul_pipeline"
+            } else if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 64 == 0 {
                 "tiled_matmul_registers"
             } else {
                 "tiled_matmul"
@@ -879,6 +1023,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             match manifest.op.as_str() {
                 "matmul" => match committed_kernel {
+                    "tiled_matmul_pipeline" => {
+                        let (m, n, k) = (dims[0], dims[1], dims[2]);
+                        module.tiled_matmul_pipeline(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: ((n / 64) as u32, (m / 64) as u32, 1),
+                                block_dim: (16, 16, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            n as u32,
+                            k as u32,
+                            &a_dev,
+                            &b_dev,
+                            cuda_host::RowWidth::new(&mut out, n as u32),
+                        )
+                    }
                     "tiled_matmul_registers" => {
                         let (m, n, k) = (dims[0], dims[1], dims[2]);
                         // Square 64x64 tiles, no edge masking needed.
