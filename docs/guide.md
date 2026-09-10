@@ -66,4 +66,4 @@ GPU events on the tested WSL setup. See the
 
 Follow the [profiling guide](https://github.com/superposition/mage/blob/master/docs/profiling.md) for timing traces and hardware counters. Always collect ordinary event timings separately from an instrumented Nsight Compute run.
 
-[First experiment: mathematical contracts and evidence](https://superposition.github.io/mage/experiments/mage-001/).
+[Mathematical contracts](kernel-contracts.md) · [Measured evidence](experiments/mage-001-validation.md).
