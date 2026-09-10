@@ -155,8 +155,8 @@ hatch the plan anticipated, and it is why it was ported last.
   for the same binary; the retained run is the one taken with the device idle,
   and it agrees with the earlier four-operation round to a few percent.
 - One capture per operation; kernel time carries no interval. Event spans come
-  from three rounds with rotating order, and the round means above are quoted
-  with their spread in `artifacts/mage-004-comparison/results.json`.
+  from three rounds with rotating order; the per-round spread lives in the
+  `results.json` the reproduction command below writes.
 - Clocks are unlocked, and the WSL timestamp fallback used by Nsight Systems has
   reduced precision.
 - Compilation, input transfers, process startup and end-to-end service work are

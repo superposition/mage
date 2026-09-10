@@ -232,15 +232,19 @@ profiling commands next to the oxide ones.
 
 - [mage-004](../experiments/mage-004.md) — method, event spans, kernel times,
   the tile sweep, and what the numbers do not establish.
-- `artifacts/mage-004-comparison/results.json` — the retained comparison run,
-  three rotating rounds, every sample and every full-element check.
-- `artifacts/cutile-nsys-final/<op>/` — one Nsight Systems capture per
-  operation, 100 launches each.
+- `docs/assets/results/mage-004/` — the portable evidence the figures are drawn
+  from: `comparison-results.json` (every sample and every full-element check)
+  and `comparison-profiles.json` (the per-launch kernel durations). Both are
+  written by `examples/oxide/export_comparison.py`, which the figure script
+  below drives.
+- `artifacts/cutile-dev/figures.sh` — captures, exports and plots in one run.
+  It needs the device to itself, so run it when no other agent is profiling.
 
 ```bash
 source scripts/cutile-env.sh
 cd examples/cutile && cargo build --release && cd ../..
 .venv/bin/python examples/oxide/comparison.py --implementation cutile \
-  --ops matmul gelu layernorm triangle --experiment mage-004 \
-  --output artifacts/mage-004-comparison --rounds 3 --iterations 100 --warmup 25
+  --experiment mage-004 --output artifacts/mage-004-comparison \
+  --rounds 3 --iterations 100 --warmup 25
+bash artifacts/cutile-dev/figures.sh   # captures, export, figures
 ```
