@@ -47,8 +47,30 @@ See the [WSL2 setup and reproduction guide](https://github.com/superposition/mag
 
 ## Installation
 
+The `mage` name on PyPI belongs to an unrelated project, so install this repository by source. [uv](https://docs.astral.sh/uv/) resolves the dependencies and caches the wheels; plain `pip` accepts the same URL.
+
 ```bash
-pip install -e .
+# A `mage` command for demos, benchmarks, and profiling code whose imports are
+# covered by torch and triton
+uv tool install git+https://github.com/superposition/mage
+
+# Into a project environment, so `mage profile` can import the project's own packages
+uv add --dev git+https://github.com/superposition/mage
+uv run mage --help
+```
+
+The first install downloads a CUDA build of PyTorch and takes several minutes; later
+installs resolve from the uv cache. On Linux the default PyTorch wheel is CUDA-enabled,
+so a tool install produces a GPU-capable `mage` without further configuration. A tool
+environment is isolated, so profile a script that imports your own packages from a
+project environment instead.
+
+For work on Mage itself:
+
+```bash
+git clone https://github.com/superposition/mage.git
+cd mage
+uv venv && uv pip install -e . pytest
 ```
 
 ## Quick Start

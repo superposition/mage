@@ -13,7 +13,6 @@ dependencies = [
     "rich>=13.0.0",
     "numpy>=2.2.6",
     "textual>=6.8.0",
-    "textual-dev>=1.8.0",
 ]
 
 [project.scripts]
@@ -23,6 +22,7 @@ mage = "mage.cli:main"
 dev = [
     "pytest>=7.0",
     "pytest-xdist",
+    "textual-dev>=1.8.0",
 ]
 
 [tool.hatch.build.targets.wheel]
