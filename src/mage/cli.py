@@ -2,6 +2,8 @@
 
 import argparse
 import sys
+import shlex
+from pathlib import Path
 
 import torch
 
@@ -151,6 +153,10 @@ def profile(
     no_persist: bool = False,
     db_path: str | None = None,
     analyze: bool = False,
+    executable: list[str] | None = None,
+    capture_range: str = "all",
+    output_dir: str | None = None,
+    launch_count: int | None = None,
 ) -> int:
     """Profile a Python script using nsys or ncu.
 
@@ -172,6 +178,12 @@ def profile(
     # Get the profiler backend
     try:
         profiler = get_backend(backend)
+        if backend == "triton":
+            if executable is not None or capture_range != "all" or output_dir or launch_count:
+                raise ValueError("Executable targets and capture/export options require nsys or ncu")
+        else:
+            profiler = type(profiler)(capture_range=capture_range, output_dir=output_dir,
+                                      launch_count=launch_count)
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -183,17 +195,21 @@ def profile(
 
     # Set up TUI
     tui = ProfilerTUI(columns=columns, group_by=group_by)
-    tui.start_session(f"python {script}", backend=backend)
+    argv = executable if executable is not None else [sys.executable, str(Path(script).resolve()), *(args or [])]
+    tui.start_session(shlex.join(argv), backend=backend)
 
-    print(f"Profiling {script} with {backend}...")
+    print(f"Profiling {shlex.join(argv)} with {backend}...")
     print("This may take a moment...\n")
 
     # Run profiler
     try:
-        for metric in profiler.run(script, args, callback=tui.add_metric):
+        iterator = (profiler.run_command(argv, callback=tui.add_metric) if executable is not None
+                    else profiler.run(script, args, callback=tui.add_metric))
+        for metric in iterator:
             pass  # Metrics added via callback
     except KeyboardInterrupt:
         print("\nProfiling interrupted")
+        return 130
     except Exception as e:
         print(f"Error during profiling: {e}")
         return 1
@@ -205,6 +221,8 @@ def profile(
     # Display results
     tui.print_final()
     tui.print_summary()
+    if output_dir:
+        print(f"Reports: {profiler.report_dir}")
 
     # Memory analysis
     if analyze and tui.aggregator.metrics:
@@ -289,6 +307,20 @@ Examples:
         help="Run memory analysis after profiling",
     )
 
+    exec_parser = subparsers.add_parser("profile-exec", help="Profile a native CUDA executable")
+    exec_parser.add_argument("--backend", "-b", choices=["nsys", "ncu"], default="nsys")
+    exec_parser.add_argument("--columns", "-c")
+    exec_parser.add_argument("--group-by", "-g")
+    exec_parser.add_argument("--no-persist", action="store_true")
+    exec_parser.add_argument("--db")
+    exec_parser.add_argument("--analyze", "-a", action="store_true")
+    exec_parser.add_argument("argv", nargs=argparse.REMAINDER, help="-- executable [arguments...]")
+    for target_parser in (profile_parser, exec_parser):
+        target_parser.add_argument("--capture-range", choices=["all", "cuda"], default="all",
+                                   help="Use cuda for a cudaProfilerStart/Stop region")
+        target_parser.add_argument("--output-dir", help="Retain native reports and JSON/CSV exports")
+        target_parser.add_argument("--launch-count", type=int, help="NCU only: maximum profiled launches")
+
     # Stress test command
     stress_parser = subparsers.add_parser(
         "stress",
@@ -313,17 +345,26 @@ Examples:
         args.command = "demo"
 
     # Profile command doesn't require CUDA check (profiler handles it)
-    if args.command == "profile":
+    if args.command in {"profile", "profile-exec"}:
         columns = args.columns.split(",") if args.columns else None
+        executable = None
+        if args.command == "profile-exec":
+            executable = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            if not executable:
+                parser.error("profile-exec requires -- executable [arguments...]")
         return profile(
-            script=args.script,
-            args=args.script_args or None,
+            script=getattr(args, "script", ""),
+            args=getattr(args, "script_args", None),
             backend=args.backend,
             columns=columns,
             group_by=args.group_by,
             no_persist=args.no_persist,
             db_path=args.db,
             analyze=args.analyze,
+            executable=executable,
+            capture_range=args.capture_range,
+            output_dir=args.output_dir,
+            launch_count=args.launch_count,
         )
 
     # Other commands require CUDA

@@ -41,3 +41,14 @@ htmlcov/
 
 # UV
 uv.lock
+
+# Reproducible experiment outputs are opt-in; native reports can be large.
+artifacts/
+target/
+oxide-build.log
+examples/oxide/*.ll
+examples/oxide/*.ptx
+_site/
+.jekyll-cache/
+.bundle/
+vendor/

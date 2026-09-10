@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101217">
+  {% seo %}
+  {% feed_meta %}
+  <link rel="stylesheet" href="{{ '/assets/notebook.css' | relative_url }}">
+  {% if page.math %}
+  <script>window.MathJax = {tex: {inlineMath: [['$', '$'], ['\\(', '\\)']]}, options: {skipHtmlTags: ['script','noscript','style','textarea','pre','code']}};</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+  {% endif %}
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="{{ '/' | relative_url }}"><span class="mark" aria-hidden="true">∿</span> {{ site.title }}</a>
+    <nav aria-label="Main navigation">
+      {% for item in site.navigation %}<a href="{% if item.external %}{{ item.url }}{% else %}{{ item.url | relative_url }}{% endif %}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.title }}</a>{% endfor %}
+    </nav>
+  </header>
+  <main id="content" class="wrap">{{ content }}</main>
+  <footer class="site-footer wrap">
+    <p>Superposition · An open notebook.</p>
+    <p><a href="https://t.me/SuprPosition">Telegram @SuprPosition</a> <span aria-hidden="true">/</span> <a href="{{ '/feed.xml' | relative_url }}">RSS</a> <span aria-hidden="true">/</span> <a href="{{ site.repository_url }}">Source & corrections</a></p>
+  </footer>
+</body>
+</html>

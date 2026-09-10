@@ -13,6 +13,9 @@ class ProfilerBackend(ABC):
 
     name: str = "base"
 
+    def run_command(self, argv, callback=None):
+        raise ValueError(f"{self.name} profiles Python in process; use nsys or ncu for executables")
+
     @abstractmethod
     def run(
         self,
@@ -80,6 +83,9 @@ class ProfilerBackend(ABC):
             Path.home() / ".local" / "cuda" / "bin",
         ]
 
+        cuda_paths.extend(sorted(Path("/opt/nvidia/nsight-compute").glob("*"), reverse=True))
+        cuda_paths.extend(sorted(Path("/opt/nvidia/nsight-systems").glob("*/target-linux-x64"), reverse=True))
+        cuda_paths.extend(sorted(Path("/usr/local").glob("cuda-*/bin"), reverse=True))
         for cuda_path in cuda_paths:
             candidate = cuda_path / self.name
             if candidate.exists() and candidate.is_file():

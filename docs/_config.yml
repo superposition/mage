@@ -1,0 +1,20 @@
+title: Mage
+subtitle: Ideas inside computation
+description: Field notes on mathematics, information, and the physical work of computation.
+url: https://superposition.github.io
+baseurl: /mage
+repository_url: https://github.com/superposition/mage
+author: Superposition
+timezone: America/New_York
+plugins: [jekyll-feed, jekyll-seo-tag]
+markdown: kramdown
+kramdown:
+  math_engine: mathjax
+defaults:
+  - scope: {path: ""}
+    values: {layout: page}
+navigation:
+  - {title: Field notes, url: /experiments/}
+  - {title: Code & evidence ↗, url: "https://github.com/superposition/mage", external: true}
+  - {title: Superposition ↗, url: "https://superposition.github.io/", external: true}
+exclude: [Gemfile, Gemfile.lock, README.md, vendor, templates, guide.md, profiling.md, experiments/mage-001-validation.md, _data, assets/results]

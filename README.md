@@ -1,12 +1,30 @@
 # Mage
 
-**Composable Triton CUDA kernels with autotuning and GPU profiling.**
+**Composable Triton CUDA kernels, native Rust CUDA experiments, and GPU profiling.**
+
+[Mathematical field notes](https://superposition.github.io/mage/) ·
+[Superposition journal](https://superposition.github.io/) ·
+[First Python/Rust investigation](https://superposition.github.io/mage/experiments/mage-001/)
+
+### Rust CUDA experiments
+
+Build the five FP32 examples with pinned cuda-oxide tooling, validate shared inputs
+against PyTorch, then profile the native executable with the same Mage display and
+SQLite history. The existing Python/Triton workflow remains available.
+
+```bash
+mage profile-exec --backend nsys --capture-range cuda --output-dir artifacts/trace -- \
+  examples/oxide/target/release/mage-oxide artifacts/mage-001/matmul --capture
+```
+
+See the [WSL2 setup and reproduction guide](https://github.com/superposition/mage/blob/master/docs/guide.md).
 
 ## Features
 
 - High-performance Triton kernels: `add`, `fma`, `relu`, `softmax`, `matmul`
 - Full autograd support for training
-- Built-in GPU profiler with TUI (no special permissions needed)
+- Built-in Triton event profiler with TUI (no special permissions needed)
+- Nsight Systems/Compute for Python scripts and native executables; Compute requires counter access
 - Memory analysis with roofline model diagnostics
 
 ## Installation

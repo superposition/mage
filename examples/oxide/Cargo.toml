@@ -1,0 +1,15 @@
+[package]
+name = "mage-oxide"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "26754ae52c26c097dc1c465a1e42c4c5d05a3d40" }
+cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "26754ae52c26c097dc1c465a1e42c4c5d05a3d40" }
+cuda-core = "=0.3.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libloading = "0.8"

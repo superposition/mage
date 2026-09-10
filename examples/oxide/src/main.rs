@@ -1,0 +1,478 @@
+// Tiled matmul is adapted from NVlabs/cuda-oxide's Apache-2.0 tiled_gemm example.
+// Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+// SPDX-License-Identifier: Apache-2.0
+#![allow(clippy::too_many_arguments)]
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
+use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
+use cuda_host::cuda_module;
+use serde::Deserialize;
+use std::{error::Error, fs, path::Path};
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    pub fn tiled_matmul(
+        m: u32,
+        n: u32,
+        k: u32,
+        a: &[f32],
+        b: &[f32],
+        mut out: DisjointSlice<f32, thread::Runtime2DIndex>,
+    ) {
+        static mut TA: SharedArray<f32, 256> = SharedArray::UNINIT;
+        static mut TB: SharedArray<f32, 256> = SharedArray::UNINIT;
+        let tx = thread::threadIdx_x() as usize;
+        let ty = thread::threadIdx_y() as usize;
+        let row = thread::blockIdx_y() as usize * 16 + ty;
+        let col = thread::blockIdx_x() as usize * 16 + tx;
+        let mut sum = 0.0f32;
+        let mut tile = 0usize;
+        while tile < (k as usize).div_ceil(16) {
+            let ak = tile * 16 + tx;
+            let bk = tile * 16 + ty;
+            // Each of the 256 threads owns one tile cell. All threads reach
+            // both barriers, including those outside the matrix at the edges.
+            unsafe {
+                TA[ty * 16 + tx] = if row < m as usize && ak < k as usize {
+                    a[row * k as usize + ak]
+                } else {
+                    0.0
+                };
+                TB[ty * 16 + tx] = if bk < k as usize && col < n as usize {
+                    b[bk * n as usize + col]
+                } else {
+                    0.0
+                };
+            }
+            thread::sync_threads();
+            let mut i = 0usize;
+            while i < 16 {
+                unsafe {
+                    sum += TA[ty * 16 + i] * TB[i * 16 + tx];
+                }
+                i += 1;
+            }
+            thread::sync_threads();
+            tile += 1;
+        }
+        if let Some(index) = thread::index_2d_runtime(&out) {
+            if row < m as usize {
+                if let Some(cell) = out.get_mut(index) {
+                    *cell = sum;
+                }
+            }
+        }
+    }
+
+    #[kernel]
+    pub fn bias_gelu(width: u32, x: &[f32], bias: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if let Some(cell) = out.get_mut(index) {
+            let z = x[i] + bias[i % width as usize];
+            let t = cuda_device::float::tanh_approx_f32(0.7978845608 * (z + 0.044715 * z * z * z));
+            *cell = 0.5 * z * (1.0 + t);
+        }
+    }
+
+    #[kernel]
+    pub fn layer_norm(
+        width: u32,
+        x: &[f32],
+        gamma: &[f32],
+        beta: &[f32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        static mut REDUCE: SharedArray<f32, 256> = SharedArray::UNINIT;
+        let tid = thread::threadIdx_x() as usize;
+        let row = thread::blockIdx_x() as usize;
+        let d = width as usize;
+        let base = row * d;
+        let mut sum = 0.0f32;
+        let mut j = tid;
+        while j < d {
+            sum += x[base + j];
+            j += 256;
+        }
+        unsafe {
+            REDUCE[tid] = sum;
+        }
+        thread::sync_threads();
+        let mut stride = 128usize;
+        while stride > 0 {
+            if tid < stride {
+                unsafe {
+                    REDUCE[tid] += REDUCE[tid + stride];
+                }
+            }
+            thread::sync_threads();
+            stride /= 2;
+        }
+        let mean = unsafe { REDUCE[0] } / d as f32;
+        // Preserve every thread's mean before reusing shared memory.
+        thread::sync_threads();
+        let mut variance = 0.0f32;
+        j = tid;
+        while j < d {
+            let centered = x[base + j] - mean;
+            variance += centered * centered;
+            j += 256;
+        }
+        unsafe {
+            REDUCE[tid] = variance;
+        }
+        thread::sync_threads();
+        stride = 128;
+        while stride > 0 {
+            if tid < stride {
+                unsafe {
+                    REDUCE[tid] += REDUCE[tid + stride];
+                }
+            }
+            thread::sync_threads();
+            stride /= 2;
+        }
+        let inv = 1.0 / cuda_device::float::sqrt_rn_f32(unsafe { REDUCE[0] } / d as f32 + 1e-5);
+        j = tid;
+        while j < d {
+            // Host validates rows*width elements and exactly 256 threads/block.
+            // Row blocks are disjoint; thread t owns columns t + 256*q.
+            unsafe {
+                *out.as_mut_ptr().add(base + j) = (x[base + j] - mean) * inv * gamma[j] + beta[j];
+            }
+            j += 256;
+        }
+    }
+
+    #[kernel]
+    pub fn triangle(n: u32, channels: u32, a: &[f32], b: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let flat = index.get();
+        if let Some(cell) = out.get_mut(index) {
+            let c = flat % channels as usize;
+            let pair = flat / channels as usize;
+            let i = pair / n as usize;
+            let j = pair % n as usize;
+            let mut sum = 0.0f32;
+            let mut k = 0usize;
+            while k < n as usize {
+                sum += a[(i * n as usize + k) * channels as usize + c]
+                    * b[(j * n as usize + k) * channels as usize + c];
+                k += 1;
+            }
+            *cell = sum;
+        }
+    }
+
+    #[kernel]
+    pub fn neighbor(
+        width: u32,
+        x: &[f32],
+        weights: &[f32],
+        rowptr: &[u32],
+        indices: &[u32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let index = thread::index_1d();
+        let flat = index.get();
+        if let Some(cell) = out.get_mut(index) {
+            let row = flat / width as usize;
+            let feature = flat % width as usize;
+            let mut edge = rowptr[row] as usize;
+            let end = rowptr[row + 1] as usize;
+            let mut sum = 0.0f32;
+            while edge < end {
+                sum += weights[edge] * x[indices[edge] as usize * width as usize + feature];
+                edge += 1;
+            }
+            *cell = sum;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    op: String,
+    dims: Vec<usize>,
+    warmup: usize,
+    iterations: usize,
+}
+fn read_f32(path: &Path, count: usize) -> Result<Vec<f32>, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if bytes.len() != count.checked_mul(4).ok_or("input size overflow")? {
+        return Err(format!("{}: incorrect byte length", path.display()).into());
+    }
+    let values: Vec<_> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    if values.iter().any(|x| !x.is_finite()) {
+        return Err("inputs must be finite FP32".into());
+    }
+    Ok(values)
+}
+fn read_u32(path: &Path, count: usize) -> Result<Vec<u32>, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if bytes.len() != count.checked_mul(4).ok_or("input size overflow")? {
+        return Err("invalid CSR byte length".into());
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect())
+}
+fn product(dims: &[usize]) -> Result<usize, Box<dyn Error>> {
+    let size = dims
+        .iter()
+        .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
+        .ok_or("shape overflow")?;
+    if size == 0 || size > i32::MAX as usize {
+        return Err("shape product must be in 1..=i32::MAX".into());
+    }
+    Ok(size)
+}
+struct Capture {
+    library: libloading::Library,
+    active: bool,
+}
+impl Capture {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            library: unsafe { libloading::Library::new("libcuda.so.1")? },
+            active: false,
+        })
+    }
+    fn call(&self, name: &[u8]) -> Result<(), Box<dyn Error>> {
+        let function: libloading::Symbol<unsafe extern "C" fn() -> i32> =
+            unsafe { self.library.get(name)? };
+        let status = unsafe { function() };
+        if status != 0 {
+            return Err(format!("CUDA profiler API error {status}").into());
+        }
+        Ok(())
+    }
+    fn start(&mut self) -> Result<(), Box<dyn Error>> {
+        self.call(b"cuProfilerStart\0")?;
+        self.active = true;
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), Box<dyn Error>> {
+        self.call(b"cuProfilerStop\0")?;
+        self.active = false;
+        Ok(())
+    }
+}
+impl Drop for Capture {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = self.stop();
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let mut args = std::env::args().skip(1);
+    let directory = args
+        .next()
+        .ok_or("usage: mage-oxide INPUT_DIR [--iterations N] [--capture]")?;
+    let dir = Path::new(&directory);
+    let mut manifest: Manifest = serde_json::from_slice(&fs::read(dir.join("input.json"))?)?;
+    let mut capture_requested = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--iterations" => {
+                manifest.iterations = args.next().ok_or("missing iteration count")?.parse()?
+            }
+            "--capture" => capture_requested = true,
+            _ => return Err(format!("unknown argument {arg}").into()),
+        }
+    }
+    if manifest.iterations == 0 || manifest.iterations > 100000 || manifest.warmup > 10000 {
+        return Err("invalid iteration count".into());
+    }
+    let dims = &manifest.dims;
+    let expected_dims = match manifest.op.as_str() {
+        "matmul" | "neighbor" => 3,
+        "gelu" | "layernorm" | "triangle" => 2,
+        _ => return Err("unknown operation".into()),
+    };
+    if dims.len() != expected_dims || dims.iter().any(|&d| d > i32::MAX as usize) {
+        return Err("invalid dimensions".into());
+    }
+    let (a_len, b_len, c_len, out_len) = match manifest.op.as_str() {
+        "matmul" => (
+            product(&[dims[0], dims[2]])?,
+            product(&[dims[2], dims[1]])?,
+            0,
+            product(&dims[..2])?,
+        ),
+        "gelu" => (product(dims)?, dims[1], 0, product(dims)?),
+        "layernorm" => (product(dims)?, dims[1], dims[1], product(dims)?),
+        "triangle" => {
+            let len = product(&[dims[0], dims[0], dims[1]])?;
+            (len, len, 0, len)
+        }
+        "neighbor" => (product(&dims[..2])?, dims[2], 0, product(&dims[..2])?),
+        _ => unreachable!(),
+    };
+    let a = read_f32(&dir.join("a.bin"), a_len)?;
+    let mut b = read_f32(&dir.join("b.bin"), b_len)?;
+    let c = if c_len > 0 {
+        read_f32(&dir.join("c.bin"), c_len)?
+    } else {
+        vec![0.0]
+    };
+    let (rowptr, mut indices) = if manifest.op == "neighbor" {
+        let ptr = read_u32(&dir.join("rowptr.bin"), dims[0] + 1)?;
+        let idx = read_u32(&dir.join("indices.bin"), dims[2])?;
+        if ptr[0] != 0
+            || ptr[dims[0]] as usize != dims[2]
+            || ptr.windows(2).any(|w| w[0] > w[1])
+            || idx.iter().any(|&i| i as usize >= dims[0])
+        {
+            return Err("invalid CSR adjacency".into());
+        }
+        (ptr, idx)
+    } else {
+        (vec![0u32], vec![0u32])
+    };
+    if b.is_empty() {
+        b.push(0.0);
+    }
+    if indices.is_empty() {
+        indices.push(0);
+    }
+    let ctx = CudaContext::new(0)?;
+    let stream = ctx.default_stream();
+    let a_dev = DeviceBuffer::from_host(&stream, &a)?;
+    let b_dev = DeviceBuffer::from_host(&stream, &b)?;
+    let c_dev = DeviceBuffer::from_host(&stream, &c)?;
+    let ptr_dev = DeviceBuffer::from_host(&stream, &rowptr)?;
+    let idx_dev = DeviceBuffer::from_host(&stream, &indices)?;
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, out_len)?;
+    let module = kernels::load(&ctx)?;
+    let linear = LaunchConfig {
+        grid_dim: ((out_len as u32).div_ceil(256), 1, 1),
+        block_dim: (256, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut launch = || -> Result<(), cuda_core::DriverError> {
+        // SAFETY: inputs and CSR bounds were validated before device allocation;
+        // each kernel receives the required launch shape and distinct output.
+        unsafe {
+            match manifest.op.as_str() {
+                "matmul" => module.tiled_matmul(
+                    &stream,
+                    LaunchConfig {
+                        grid_dim: (
+                            (dims[1] as u32).div_ceil(16),
+                            (dims[0] as u32).div_ceil(16),
+                            1,
+                        ),
+                        block_dim: (16, 16, 1),
+                        shared_mem_bytes: 0,
+                    },
+                    dims[0] as u32,
+                    dims[1] as u32,
+                    dims[2] as u32,
+                    &a_dev,
+                    &b_dev,
+                    cuda_host::RowWidth::new(&mut out, dims[1] as u32),
+                ),
+                "gelu" => {
+                    module.bias_gelu(&stream, linear, dims[1] as u32, &a_dev, &b_dev, &mut out)
+                }
+                "layernorm" => module.layer_norm(
+                    &stream,
+                    LaunchConfig {
+                        grid_dim: (dims[0] as u32, 1, 1),
+                        block_dim: (256, 1, 1),
+                        shared_mem_bytes: 0,
+                    },
+                    dims[1] as u32,
+                    &a_dev,
+                    &b_dev,
+                    &c_dev,
+                    &mut out,
+                ),
+                "triangle" => module.triangle(
+                    &stream,
+                    linear,
+                    dims[0] as u32,
+                    dims[1] as u32,
+                    &a_dev,
+                    &b_dev,
+                    &mut out,
+                ),
+                "neighbor" => module.neighbor(
+                    &stream,
+                    linear,
+                    dims[1] as u32,
+                    &a_dev,
+                    &b_dev,
+                    &ptr_dev,
+                    &idx_dev,
+                    &mut out,
+                ),
+                _ => unreachable!(),
+            }
+        }
+    };
+    let mut capture = Capture::new()?;
+    for _ in 0..manifest.warmup {
+        launch()?;
+    }
+    stream.synchronize()?;
+    let start = ctx.new_event(Some(cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT))?;
+    let end = ctx.new_event(Some(cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT))?;
+    let mut samples = Vec::with_capacity(manifest.iterations);
+    if capture_requested {
+        capture.start()?;
+    }
+    for _ in 0..manifest.iterations {
+        start.record(&stream)?;
+        launch()?;
+        end.record(&stream)?;
+        samples.push(start.elapsed_ms(&end)? as f64 * 1000.0);
+    }
+    if capture_requested {
+        capture.stop()?;
+    }
+    let result = out.to_host_vec(&stream)?;
+    let run_id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos(),
+        std::process::id()
+    );
+    let run_dir = dir.join("rust-runs").join(&run_id);
+    fs::create_dir_all(&run_dir)?;
+    let output_bytes: Vec<u8> = result.iter().flat_map(|v| v.to_le_bytes()).collect();
+    fs::write(run_dir.join("output.bin"), &output_bytes)?;
+    fs::write(dir.join("rust-output.bin"), &output_bytes)?;
+    let timing = serde_json::json!({"op": manifest.op, "dims": dims, "warmup": manifest.warmup,
+        "iterations": manifest.iterations, "capture": capture_requested, "samples_us": samples,
+        "event_mean_us": samples.iter().sum::<f64>() / samples.len() as f64,
+        "precision": "FP32 scalar arithmetic; no tensor cores", "run_id": run_id});
+    fs::write(
+        run_dir.join("timing.json"),
+        serde_json::to_string_pretty(&timing)? + "\n",
+    )?;
+    fs::write(
+        dir.join("rust-timing.json"),
+        serde_json::to_string_pretty(&timing)? + "\n",
+    )?;
+    println!("{}", serde_json::to_string(&timing)?);
+    Ok(())
+}
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("mage-oxide: {error}");
+        std::process::exit(1);
+    }
+}

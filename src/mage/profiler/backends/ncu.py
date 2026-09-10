@@ -1,20 +1,13 @@
-"""Nsight Compute (ncu) profiler backend."""
-
+"""Nsight Compute exports, with explicit units and missing-value handling."""
 from __future__ import annotations
-
 import csv
-import os
-import subprocess
-import sys
-from datetime import datetime
 from io import StringIO
-from typing import Iterator, Callable
+import math
+import re
 
-from mage.profiler.backends.base import ProfilerBackend
+from .native import NativeBackend
 from mage.profiler.models import KernelMetric
 
-
-# Mapping from ncu metric names to KernelMetric fields
 NCU_METRIC_MAP = {
     # Duration
     "gpu__time_duration.avg": "duration_us_raw",  # in nanoseconds, convert later
@@ -63,236 +56,111 @@ NCU_METRIC_MAP = {
 }
 
 
-class NcuBackend(ProfilerBackend):
-    """Backend for NVIDIA Nsight Compute profiler."""
+_TIME_US = {"nsecond": .001, "ns": .001, "usecond": 1, "us": 1,
+            "µs": 1, "msecond": 1000, "ms": 1000, "second": 1e6, "s": 1e6}
+_BYTE_SCALE = {"byte": 1, "b": 1, "kbyte": 1e3, "kb": 1e3,
+               "mbyte": 1e6, "mb": 1e6, "gbyte": 1e9, "gb": 1e9}
+_FRACTIONS = {"occupancy"}
+_BYTES_PER_SECTOR = {"global_load_efficiency", "global_store_efficiency"}
+_INTEGER_FIELDS = {"registers_per_thread", "static_shared_mem_bytes", "dynamic_shared_mem_bytes",
+                   "shared_bank_conflicts", "global_load_transactions", "global_store_transactions",
+                   "l1_bytes_total", "l2_bytes_total", "l2_bytes_miss", "dram_read_bytes", "dram_write_bytes"}
 
+
+class NcuBackend(NativeBackend):
     name = "ncu"
 
-    def __init__(self, metrics: list[str] | None = None):
-        """Initialize ncu backend.
+    def __init__(self, metrics=None, **kwargs):
+        super().__init__(**kwargs)
+        self.metrics = metrics
 
-        Args:
-            metrics: List of ncu metrics to collect. If None, uses defaults.
-        """
-        self.metrics = metrics or list(NCU_METRIC_MAP.keys())
-
-    def get_command(self, script: str, args: list[str] | None = None) -> list[str]:
-        """Build ncu profile command."""
-        ncu_path = self.find_executable()
-        if not ncu_path:
+    def get_exec_command(self, argv):
+        executable = self.find_executable()
+        if not executable:
             raise RuntimeError("ncu executable not found")
+        if self.report_dir is None:
+            self._prepare()
+        command = [executable, "--csv", "--page", "raw", "--print-units", "base",
+                   "--target-processes", "all", "--export", str(self.report_dir / "capture"),
+                   "--log-file", str(self.report_dir / "metrics.csv")]
+        command += ["--metrics", ",".join(self.metrics)] if self.metrics else ["--set", "full"]
+        if self.capture_range == "cuda":
+            command += ["--profile-from-start", "off"]
+        if self.launch_count is not None:
+            command += ["--launch-count", str(self.launch_count)]
+        return command + list(argv)
 
-        # ncu requires absolute path to Python executable
-        python_path = sys.executable
-        # Get absolute path to script
-        script_path = os.path.abspath(script)
+    def read_metrics(self):
+        path = self.report_dir / "metrics.csv"
+        if not path.exists():
+            raise RuntimeError(f"Nsight Compute CSV export is missing: {path}")
+        yield from self._parse_csv_output(path.read_text(errors="replace"))
 
-        cmd = [
-            ncu_path,
-            "--csv",
-            "--target-processes", "all",
-            "--set", "full",  # Collect comprehensive metrics
-        ]
+    @staticmethod
+    def _parse_value(value):
+        try:
+            number = float(value.strip().replace(",", "").rstrip("%"))
+            return number if math.isfinite(number) else None
+        except (AttributeError, ValueError):
+            return None
 
-        # Add specific metrics if not using full set
-        # for metric in self.metrics:
-        #     cmd.extend(["--metrics", metric])
+    @staticmethod
+    def _parse_dim(value):
+        # An aggregate block/thread count cannot recover the launch's three axes.
+        parts = re.findall(r"\d+", value or "")
+        return tuple(map(int, parts)) if len(parts) == 3 else None
 
-        cmd.extend([python_path, script_path])
-        if args:
-            cmd.extend(args)
-        return cmd
-
-    def run(
-        self,
-        script: str,
-        args: list[str] | None = None,
-        callback: Callable[[KernelMetric], None] | None = None,
-    ) -> Iterator[KernelMetric]:
-        """Run ncu and yield kernel metrics."""
-        cmd = self.get_command(script, args)
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-
-        stdout, stderr = process.communicate()
-
-        # Parse CSV output
-        if stdout.strip():
-            yield from self._parse_csv_output(stdout, callback)
-
-    def _parse_csv_output(
-        self,
-        csv_output: str,
-        callback: Callable[[KernelMetric], None] | None = None,
-    ) -> Iterator[KernelMetric]:
-        """Parse ncu CSV output into kernel metrics."""
-        # ncu CSV has a header row and data rows
-        # Each row represents one kernel invocation with all metrics
-
-        lines = csv_output.strip().split("\n")
-        if not lines:
-            return
-
-        # Find the header line (starts with "ID" or contains metric names)
-        header_idx = None
-        for i, line in enumerate(lines):
-            if line.startswith('"ID"') or line.startswith("ID,"):
-                header_idx = i
-                break
-
-        if header_idx is None:
-            return
-
-        csv_text = "\n".join(lines[header_idx:])
-        reader = csv.DictReader(StringIO(csv_text))
-
-        current_kernel = None
-        kernel_metrics: dict[str, dict] = {}
-
+    def _parse_csv_output(self, csv_output, callback=None):
+        lines = csv_output.splitlines()
+        header = next((i for i, line in enumerate(lines)
+                       if line.startswith('"ID",') or line.startswith("ID,")), None)
+        if header is None:
+            raise RuntimeError("Nsight Compute output has no raw metric CSV header")
+        reader = csv.DictReader(StringIO("\n".join(lines[header:])))
+        if not {"Metric Name", "Metric Value", "Metric Unit", "Kernel Name"} <= set(reader.fieldnames or []):
+            raise RuntimeError("Unsupported Nsight Compute CSV schema")
+        groups = {}
         for row in reader:
-            kernel_name = row.get("Kernel Name", row.get("Name", "unknown"))
-            if not kernel_name or kernel_name == "unknown":
+            name = row.get("Kernel Name")
+            if not name:
                 continue
-
-            # ncu outputs one row per metric per kernel
-            # Group metrics by kernel invocation
-            kernel_id = row.get("ID", "0")
-            key = f"{kernel_id}_{kernel_name}"
-
-            if key not in kernel_metrics:
-                kernel_metrics[key] = {
-                    "kernel_name": kernel_name,
-                    "timestamp": datetime.now(),
-                }
-
-            # Extract metric value
-            metric_name = row.get("Metric Name", "")
-            metric_value = row.get("Metric Value", row.get("Average", ""))
-
-            if metric_name in NCU_METRIC_MAP:
-                field = NCU_METRIC_MAP[metric_name]
-                try:
-                    kernel_metrics[key][field] = self._parse_value(metric_value)
-                except (ValueError, TypeError):
-                    pass
-
-        # Convert to KernelMetric objects
-        for data in kernel_metrics.values():
-            metric = self._build_metric(data)
+            key = tuple(row.get(k) for k in ("Process ID", "Context", "Stream", "ID", "Kernel Name"))
+            data = groups.setdefault(key, {"kernel_name": name,
+                "grid_size": self._parse_dim(row.get("Grid Size")),
+                "block_size": self._parse_dim(row.get("Block Size"))})
+            field = NCU_METRIC_MAP.get(row.get("Metric Name"))
+            value = self._parse_value(row.get("Metric Value"))
+            if field is None or value is None or field in {"grid_size_raw", "block_size_raw"}:
+                continue
+            unit = (row.get("Metric Unit") or "").strip().lower()
+            if field == "duration_us_raw":
+                if unit not in _TIME_US:
+                    raise RuntimeError(f"Unsupported duration unit: {unit!r}")
+                field, value = "duration_us", value * _TIME_US[unit]
+            elif field == "memory_throughput_raw":
+                scale = _BYTE_SCALE.get(unit.removesuffix("/second").removesuffix("/s"))
+                if scale is None or "/" not in unit:
+                    raise RuntimeError(f"Unsupported bandwidth unit: {unit!r}")
+                field, value = "memory_throughput_gbps", value * scale / 1e9
+            elif field in _FRACTIONS:
+                if unit not in {"%", "pct"}:
+                    raise RuntimeError(f"Unsupported percentage unit: {unit!r}")
+                value /= 100
+            elif field in _BYTES_PER_SECTOR:
+                value /= 32  # SASS data bytes per 32-byte sector.
+            elif field.endswith("_bytes") or field.endswith("_bytes_total") or field == "l2_bytes_miss":
+                scale = _BYTE_SCALE.get(unit)
+                if scale is None:
+                    raise RuntimeError(f"Unsupported byte unit: {unit!r}")
+                value *= scale
+            data[field] = int(value) if field in _INTEGER_FIELDS else value
+        for data in groups.values():
+            if "duration_us" not in data:
+                raise RuntimeError(f"Missing duration for {data['kernel_name']}; capture is incomplete")
+            static, dynamic = data.get("static_shared_mem_bytes"), data.get("dynamic_shared_mem_bytes")
+            if static is not None and dynamic is not None:
+                data["shared_mem_bytes"] = static + dynamic
+            metric = KernelMetric(**data)
             if callback:
                 callback(metric)
             yield metric
-
-    def _parse_value(self, value: str) -> float | int | str:
-        """Parse a metric value from string."""
-        if not value:
-            return None
-
-        # Remove units and commas
-        value = value.strip().replace(",", "")
-
-        # Handle percentage
-        if value.endswith("%"):
-            return float(value[:-1])
-
-        # Handle byte suffixes
-        suffixes = {"K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}
-        for suffix, multiplier in suffixes.items():
-            if value.endswith(suffix):
-                return float(value[:-1]) * multiplier
-
-        # Try numeric conversion
-        try:
-            if "." in value:
-                return float(value)
-            return int(value)
-        except ValueError:
-            return value
-
-    def _build_metric(self, data: dict) -> KernelMetric:
-        """Build a KernelMetric from parsed data."""
-        # Convert raw values
-        duration_us = data.get("duration_us_raw", 0)
-        if isinstance(duration_us, (int, float)):
-            duration_us = duration_us / 1000.0  # ns to us
-
-        mem_throughput = data.get("memory_throughput_raw", None)
-        if mem_throughput:
-            mem_throughput = mem_throughput / 1e9  # bytes/s to GB/s
-
-        occupancy = data.get("occupancy", None)
-        if occupancy:
-            occupancy = occupancy / 100.0  # percent to fraction
-
-        # Parse grid/block size strings like "128,1,1"
-        grid_size = self._parse_dim(data.get("grid_size_raw", "1,1,1"))
-        block_size = self._parse_dim(data.get("block_size_raw", "1,1,1"))
-
-        static_smem = data.get("static_shared_mem_bytes")
-        dynamic_smem = data.get("dynamic_shared_mem_bytes")
-        total_smem = None
-        if static_smem is not None or dynamic_smem is not None:
-            total_smem = (static_smem or 0) + (dynamic_smem or 0)
-
-        # Convert efficiency ratios (ncu reports as ratio, we want 0-1)
-        load_eff = data.get("global_load_efficiency")
-        store_eff = data.get("global_store_efficiency")
-
-        return KernelMetric(
-            kernel_name=data["kernel_name"],
-            duration_us=duration_us or 0.0,
-            timestamp=data.get("timestamp", datetime.now()),
-            grid_size=grid_size,
-            block_size=block_size,
-            registers_per_thread=data.get("registers_per_thread"),
-            shared_mem_bytes=total_smem,
-            static_shared_mem_bytes=static_smem,
-            dynamic_shared_mem_bytes=dynamic_smem,
-            occupancy=occupancy,
-            memory_throughput_gbps=mem_throughput,
-            compute_throughput_pct=data.get("compute_throughput_pct"),
-            # L1 cache
-            l1_hit_rate=data.get("l1_hit_rate"),
-            l1_bytes_total=data.get("l1_bytes_total"),
-            l1_utilization=data.get("l1_utilization"),
-            # L2 cache
-            l2_hit_rate=data.get("l2_hit_rate"),
-            l2_bytes_total=data.get("l2_bytes_total"),
-            l2_bytes_miss=data.get("l2_bytes_miss"),
-            l2_utilization=data.get("l2_utilization"),
-            # DRAM
-            dram_read_bytes=data.get("dram_read_bytes"),
-            dram_write_bytes=data.get("dram_write_bytes"),
-            dram_utilization=data.get("dram_utilization"),
-            # Memory efficiency
-            global_load_efficiency=load_eff,
-            global_store_efficiency=store_eff,
-            global_load_transactions=data.get("global_load_transactions"),
-            global_store_transactions=data.get("global_store_transactions"),
-            # Shared memory
-            shared_utilization=data.get("shared_utilization"),
-            shared_bank_conflicts=data.get("shared_bank_conflicts"),
-        )
-
-    def _parse_dim(self, value: str | tuple | int) -> tuple[int, int, int]:
-        """Parse a dimension string like '128,1,1' into a tuple."""
-        if isinstance(value, tuple):
-            return value
-        if isinstance(value, int):
-            return (value, 1, 1)
-        if isinstance(value, str):
-            parts = value.replace(" ", "").split(",")
-            if len(parts) >= 3:
-                return (int(parts[0]), int(parts[1]), int(parts[2]))
-            elif len(parts) == 1:
-                return (int(parts[0]), 1, 1)
-        return (1, 1, 1)
-
-    def parse_line(self, line: str) -> KernelMetric | None:
-        """Parse a single CSV line (not typically used for ncu)."""
-        return None
