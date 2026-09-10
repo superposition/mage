@@ -335,3 +335,11 @@ with profile_triton() as profiler:
 for metric in profiler.get_metrics():
     print(f"{metric.kernel_name}: {metric.duration_us:.2f} μs")
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+The Rust example under `examples/oxide` adapts NVlabs `cuda-oxide`'s `tiled_gemm`
+example and keeps its Apache-2.0 license and attribution; see
+[examples/oxide/LICENSE](examples/oxide/LICENSE).
