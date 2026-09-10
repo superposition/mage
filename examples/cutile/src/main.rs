@@ -8,7 +8,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use cuda_core::Stream;
+use cutile::cuda_core::Stream;
 use cutile::api;
 use cutile::prelude::*;
 use cutile::tensor::{PartitionMut, ToHostVec};
@@ -135,6 +135,92 @@ mod kernels {
         y.store(centered * inv_std * scale + shift);
     }
 
+
+    /// Neighbor aggregation over a CSR adjacency: one output row per program
+    /// block, one feature tile per program.
+    ///
+    /// `y[i, :] = sum over the edges of row i of weights[e] * x[indices[e], :]`.
+    /// The adjacency is irregular — how many edges a row has is data, and each
+    /// edge names the row it reads — so the row pointers and the edge indices
+    /// come in through raw device pointers and are read one at a time with
+    /// `load_ptr_tko`. A partition view has no scalar load, which is why the
+    /// irregular operation needs the pointer path the four regular operations
+    /// do without.
+    #[cutile::entry()]
+    unsafe fn neighbor<const BW: i32>(
+        y: &mut Tensor<f32, { [1, BW] }>,
+        x: &Tensor<f32, { [-1, -1] }>,
+        weights: *const f32,
+        rowptr: *const i32,
+        indices: *const i32,
+    ) {
+        // SAFETY: the host validates the CSR bounds before the launch — row
+        // pointers do not decrease and end at the edge count, and every index
+        // names a row of  — so the loop cannot read past either array.
+        let pid: (i32, i32, i32) = get_tile_block_id();
+        let row = pid.0;
+        let rowptr_base: PointerTile<*const i32, { [] }> = pointer_to_tile(rowptr);
+        let weights_base: PointerTile<*const f32, { [] }> = pointer_to_tile(weights);
+        let indices_base: PointerTile<*const i32, { [] }> = pointer_to_tile(indices);
+
+        // The tuple type is written out because the Tile IR builder needs the
+        // result type; the mask and padding arguments stay unannotated, since a
+        // `Tile<..>` inside an expression is not rewritten by the entry macro.
+        let (row_start, _): (Tile<i32, { [] }>, Token) = load_ptr_tko(
+            addptr(rowptr_base, row),
+            ordering::Weak,
+            None::<scope::TileBlock>,
+            None,
+            None,
+            None,
+            Latency::<0>,
+        );
+        let (row_end, _): (Tile<i32, { [] }>, Token) = load_ptr_tko(
+            addptr(rowptr_base, row + 1),
+            ordering::Weak,
+            None::<scope::TileBlock>,
+            None,
+            None,
+            None,
+            Latency::<0>,
+        );
+        let start: i32 = tile_to_scalar::<i32, i32>(row_start);
+        let end: i32 = tile_to_scalar::<i32, i32>(row_end);
+
+        let part_x = x.partition(shape![1, BW]);
+        let mut acc: Tile<f32, { [1, BW] }> = constant(0.0f32, shape![1, BW]);
+        // A counted loop rather than `while edge < end`: the DSL lowers
+        // `for` over a runtime range, and scalar comparisons are not one of
+        // its supported binary operators.
+        let edge_count = end - start;
+        for offset in 0..edge_count {
+            let edge = start + offset;
+            let (index, _): (Tile<i32, { [] }>, Token) = load_ptr_tko(
+                addptr(indices_base, edge),
+                ordering::Weak,
+                None::<scope::TileBlock>,
+                None,
+                None,
+                None,
+                Latency::<0>,
+            );
+            let (weight, _): (Tile<f32, { [] }>, Token) = load_ptr_tko(
+                addptr(weights_base, edge),
+                ordering::Weak,
+                None::<scope::TileBlock>,
+                None,
+                None,
+                None,
+                Latency::<0>,
+            );
+            let source_row: i32 = tile_to_scalar::<i32, i32>(index);
+            let weight: f32 = tile_to_scalar::<f32, f32>(weight);
+            let x_row: Tile<f32, { [1, BW] }> = part_x.load([source_row, pid.1]);
+            acc = acc + x_row * broadcast_scalar(weight, shape![1, BW]);
+        }
+        y.store(acc);
+    }
+
     /// Triangle contraction, `z[i, j, c] = sum_k a[i, k, c] * b[j, k, c]`.
     ///
     /// Each channel is one matrix multiply: the channel axis is the third grid
@@ -185,6 +271,17 @@ fn read_f32(path: &Path, count: usize) -> Result<Vec<f32>, Box<dyn Error>> {
         return Err("inputs must be finite FP32".into());
     }
     Ok(values)
+}
+
+fn read_u32(path: &Path, count: usize) -> Result<Vec<u32>, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    if bytes.len() != count.checked_mul(4).ok_or("input size overflow")? {
+        return Err(format!("{}: incorrect byte length", path.display()).into());
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect())
 }
 
 fn product(dims: &[usize]) -> Result<usize, Box<dyn Error>> {
@@ -406,11 +503,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         "gelu" => run_bias_gelu(dir, &manifest, capture_requested),
         "layernorm" => run_layer_norm(dir, &manifest, capture_requested),
         "triangle" => run_triangle(dir, &manifest, capture_requested),
-        other => Err(format!(
-            "operation {other} is not implemented in the cuTile track yet; \
-             the cuda-oxide binary in examples/oxide covers all five operations"
-        )
-        .into()),
+        "neighbor" => run_neighbor(dir, &manifest, capture_requested),
+        other => Err(format!("operation {other} is not one of the five measured operations").into()),
     }
 }
 
@@ -660,6 +754,104 @@ fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
         &result,
         serde_json::json!({"tiles": {"i": tile, "j": tile, "channels": channels},
                            "padded": [n_pad, n_pad, channels]}),
+    )
+}
+
+/// Feature tile for the CSR kernel: powers of two, never wider than necessary.
+fn neighbor_tile(width: usize) -> usize {
+    if width >= 128 {
+        128
+    } else {
+        width.next_power_of_two()
+    }
+}
+
+fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+    let (rows, width, edges) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
+    let x = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
+    let mut weights = read_f32(&dir.join("b.bin"), edges)?;
+    let rowptr = read_u32(&dir.join("rowptr.bin"), rows + 1)?;
+    let mut indices = read_u32(&dir.join("indices.bin"), edges)?;
+    if rowptr[0] != 0
+        || rowptr[rows] as usize != edges
+        || rowptr.windows(2).any(|w| w[0] > w[1])
+        || indices.iter().any(|&i| i as usize >= rows)
+    {
+        return Err("invalid CSR adjacency".into());
+    }
+    // The edge arrays are read through raw pointers, so they must own at least
+    // one element even when the graph has no edges; no row can reach that
+    // element because every row's segment is empty.
+    if weights.is_empty() {
+        weights.push(0.0);
+    }
+    if indices.is_empty() {
+        indices.push(0);
+    }
+
+    let tile = neighbor_tile(width);
+    let width_pad = width.div_ceil(tile) * tile;
+    let x_pad = pad_rows(&x, rows, width, rows, width_pad);
+
+    let harness = Harness::new()?;
+    let stream = &harness.stream;
+    let x_dev: Arc<Tensor<f32>> = api::copy_host_vec_to_device(&Arc::new(x_pad))
+        .reshape(&[rows, width_pad])
+        .sync_on(stream)?
+        .into();
+    let weights_dev: Arc<Tensor<f32>> = api::copy_host_vec_to_device(&Arc::new(weights))
+        .sync_on(stream)?
+        .into();
+    // The kernel reads the CSR arrays as i32: that is the element type the
+    // pointer path supports, and the bounds check above keeps the values in
+    // range.
+    let rowptr_i32: Vec<i32> = rowptr.iter().map(|&value| value as i32).collect();
+    let indices_i32: Vec<i32> = indices.iter().map(|&value| value as i32).collect();
+    let rowptr_dev: Arc<Tensor<i32>> = api::copy_host_vec_to_device(&Arc::new(rowptr_i32))
+        .sync_on(stream)?
+        .into();
+    let indices_dev: Arc<Tensor<i32>> = api::copy_host_vec_to_device(&Arc::new(indices_i32))
+        .sync_on(stream)?
+        .into();
+    let mut y: Tensor<f32> = api::zeros::<f32>(&[rows, width_pad]).sync_on(stream)?;
+    let weights_ptr = weights_dev.device_pointer();
+    let rowptr_ptr = rowptr_dev.device_pointer();
+    let indices_ptr = indices_dev.device_pointer();
+    let generics = vec![tile.to_string()];
+    let samples = harness.time(
+        manifest.warmup,
+        manifest.iterations,
+        capture_requested,
+        &mut || {
+            let _ = unsafe {
+                kernels::neighbor(
+                    (&mut y).partition([1, tile]),
+                    &x_dev,
+                    weights_ptr,
+                    rowptr_ptr,
+                    indices_ptr,
+                )
+            }
+            .generics(generics.clone())
+            .sync_on(stream)?;
+            Ok(())
+        },
+    )?;
+
+    let host: Vec<f32> = y.to_host_vec().sync_on(stream)?;
+    let mut result = Vec::with_capacity(product(&[rows, width])?);
+    for row in 0..rows {
+        result.extend_from_slice(&host[row * width_pad..row * width_pad + width]);
+    }
+    write_run(
+        dir,
+        manifest,
+        capture_requested,
+        &samples,
+        &result,
+        serde_json::json!({"tiles": {"rows": 1, "cols": tile},
+                           "padded": [rows, width_pad],
+                           "path": "raw pointers (load_ptr_tko)"}),
     )
 }
 
