@@ -67,13 +67,13 @@ mod kernels {
         }
     }
 
-    /// Register-tiled matmul: 64x64 block tile, 4x4 per thread, 16-deep K steps.
+    /// Register-tiled matmul: 64x64 block tile, 4x4 per thread, 32-deep K steps.
     ///
     /// Each thread reuses four A values against four B values, so shared-memory
     /// traffic per multiply-add is a quarter of the one-output-per-thread kernel
     /// above. Global loads move four floats per instruction into shared memory.
     /// The host launches this only when `m` and `n` are multiples of 64 and `k` of
-    /// 16; `tiled_matmul` covers every other shape, including the edges.
+    /// 32; `tiled_matmul` covers every other shape, including the edges.
     #[kernel]
     pub fn tiled_matmul_registers(
         n: u32,
