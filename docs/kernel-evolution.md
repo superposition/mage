@@ -139,9 +139,18 @@ fixed in the generator:
   safe, which is why the published captures never saw it; width 128 (span 16) is not. The
   generated template now restricts each warp to its own `[start, end)` range, which is
   correct at every width and warps-per-row (checked at widths 32, 128, 768, 2048 with 1,
-  2, 4 and 8 warps per row). **The committed `layer_norm_pair` still shares this defect
-  for widths below 256 that are multiples of four; the published records are unaffected
-  because their widths are 768 and 257.**
+  2, 4 and 8 warps per row).
+
+**The committed `layer_norm_pair` shared this defect** for widths below 256 that are
+multiples of four, which the published captures never exercised. It is fixed in the host
+dispatch: `layer_norm_pair` is now selected only when each warp's span is a whole number
+of 32-lane steps, and narrower rows take the single-warp kernel, which guards every
+access. Verified after the change: widths 4, 64 and 128 report `layer_norm_warp` and pass
+the reference; widths 252, 256, 768 and 2048 report `layer_norm_pair` and pass; width 257
+takes the scalar path and passes; and the full small suite (five operations, every edge
+shape, including the `[17, 19, 23]` matmul fallback and `[3, 257]` layer norm) passes. The
+published records are unaffected, since width 768 and the scalar 257 path route exactly as
+before.
 - **Undersized shared array.** The transposed A layout needs `(block_m + 4) x k_step`
   floats and the row-major layout needs `block_m x k_step`; the generator declared
   `at_stride x k_step` for both. At 64x32 that halved the array, so A writes overwrote

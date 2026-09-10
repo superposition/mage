@@ -778,6 +778,33 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some(role) => Some(resolve_candidate(&manifest.op, dims, role)?),
         None => None,
     };
+    // Which committed kernel this shape selects is decided once: both the launch
+    // below and the timing record read this, so they cannot disagree.
+    let committed_kernel = match manifest.op.as_str() {
+        "matmul" => {
+            if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 64 == 0 {
+                "tiled_matmul_registers"
+            } else {
+                "tiled_matmul"
+            }
+        }
+        "layernorm" => {
+            let width = dims[1];
+            // The two-warp split shares a row by whole 32-lane steps, so it is only
+            // sound when each warp's span is a multiple of 32; narrower rows would
+            // count part of the row twice and take the single-warp kernel instead.
+            if width % 4 == 0 && width <= 2048 && (width as usize).div_ceil(8) % 32 == 0 {
+                "layer_norm_pair"
+            } else if width % 4 == 0 {
+                "layer_norm_warp"
+            } else {
+                "layer_norm"
+            }
+        }
+        "gelu" => "bias_gelu",
+        "triangle" => "triangle",
+        _ => "neighbor",
+    };
     let linear = LaunchConfig {
         grid_dim: ((out_len as u32).div_ceil(256), 1, 1),
         block_dim: (256, 1, 1),
@@ -851,9 +878,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                 };
             }
             match manifest.op.as_str() {
-                "matmul" => {
-                    let (m, n, k) = (dims[0], dims[1], dims[2]);
-                    if m % 64 == 0 && n % 64 == 0 && k % 64 == 0 {
+                "matmul" => match committed_kernel {
+                    "tiled_matmul_registers" => {
+                        let (m, n, k) = (dims[0], dims[1], dims[2]);
                         // Square 64x64 tiles, no edge masking needed.
                         module.tiled_matmul_registers(
                             &stream,
@@ -868,42 +895,35 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             cuda_host::RowWidth::new(&mut out, n as u32),
                         )
-                    } else {
-                        module.tiled_matmul(
-                            &stream,
-                            LaunchConfig {
-                                grid_dim: (
-                                    (dims[1] as u32).div_ceil(16),
-                                    (dims[0] as u32).div_ceil(16),
-                                    1,
-                                ),
-                                block_dim: (16, 16, 1),
-                                shared_mem_bytes: 0,
-                            },
-                            dims[0] as u32,
-                            dims[1] as u32,
-                            dims[2] as u32,
-                            &a_dev,
-                            &b_dev,
-                            cuda_host::RowWidth::new(&mut out, dims[1] as u32),
-                        )
                     }
-                }
+                    _ => module.tiled_matmul(
+                        &stream,
+                        LaunchConfig {
+                            grid_dim: (
+                                (dims[1] as u32).div_ceil(16),
+                                (dims[0] as u32).div_ceil(16),
+                                1,
+                            ),
+                            block_dim: (16, 16, 1),
+                            shared_mem_bytes: 0,
+                        },
+                        dims[0] as u32,
+                        dims[1] as u32,
+                        dims[2] as u32,
+                        &a_dev,
+                        &b_dev,
+                        cuda_host::RowWidth::new(&mut out, dims[1] as u32),
+                    ),
+                },
                 "gelu" => {
                     module.bias_gelu(&stream, linear, dims[1] as u32, &a_dev, &b_dev, &mut out)
                 }
                 "layernorm" => {
                     let rows = dims[0] as u32;
                     let width = dims[1] as u32;
-                    // Eight rows per block, one warp each.
-                    let block = LaunchConfig {
-                        grid_dim: (rows.div_ceil(8), 1, 1),
-                        block_dim: (256, 1, 1),
-                        shared_mem_bytes: 0,
-                    };
-                    if width % 4 == 0 && width <= 2048 {
+                    match committed_kernel {
                         // Two warps per row: 1024 blocks instead of 512, so more warps stay resident.
-                        module.layer_norm_pair(
+                        "layer_norm_pair" => module.layer_norm_pair(
                             &stream,
                             LaunchConfig {
                                 grid_dim: (rows.div_ceil(4), 1, 1),
@@ -916,14 +936,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             &c_dev,
                             &mut out,
-                        )
-                    } else if width % 4 == 0 {
-                        module.layer_norm_warp(
-                            &stream, block, width, rows,
-                            &a_dev, &b_dev, &c_dev, &mut out,
-                        )
-                    } else {
-                        module.layer_norm(
+                        ),
+                        // Eight rows per block, one warp each.
+                        "layer_norm_warp" => module.layer_norm_warp(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (rows.div_ceil(8), 1, 1),
+                                block_dim: (256, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            width,
+                            rows,
+                            &a_dev,
+                            &b_dev,
+                            &c_dev,
+                            &mut out,
+                        ),
+                        _ => module.layer_norm(
                             &stream,
                             LaunchConfig {
                                 grid_dim: (rows, 1, 1),
@@ -935,7 +964,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             &c_dev,
                             &mut out,
-                        )
+                        ),
                     }
                 }
                 "triangle" => module.triangle(
@@ -1011,27 +1040,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         (Some(CandidateRole::New), _) => {
             ("layernorm_new", candidates::NEW_LAYERNORM_PARAMS_JSON)
         }
-        (None, "matmul") => (
-            if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 64 == 0 {
-                "tiled_matmul_registers"
-            } else {
-                "tiled_matmul"
-            },
-            "",
-        ),
-        (None, "layernorm") => (
-            if dims[1] % 4 == 0 && dims[1] <= 2048 {
-                "layer_norm_pair"
-            } else if dims[1] % 4 == 0 {
-                "layer_norm_warp"
-            } else {
-                "layer_norm"
-            },
-            "",
-        ),
-        (None, "gelu") => ("bias_gelu", ""),
-        (None, "triangle") => ("triangle", ""),
-        (None, _) => ("neighbor", ""),
+        (None, _) => (committed_kernel, ""),
     };
     let timing = serde_json::json!({"op": manifest.op, "dims": dims, "warmup": manifest.warmup,
         "iterations": manifest.iterations, "capture": capture_requested, "samples_us": samples,
