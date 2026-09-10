@@ -55,14 +55,33 @@ other.
 | Upstream clone | `~/code/cutile-rs` @ `v0.3.1` = `cdc69c13a7529552a26d9941893f047970d8e95f` | `git describe` |
 | crates.io | `cutile = "0.3.1"` is published | `cargo search cutile` |
 
-Only the toolkit install is missing.
+Only the toolkit was missing. It is now in place at `/usr/local/cuda-13.3`,
+installed on 2026-09-10 **without touching the package database**: an earlier
+NVIDIA DKMS build left `linux-headers-5.15.0-191-generic` half-configured, apt
+refuses to run in that state, and the toolkit pieces cuTile actually reads total
+about 90 MB. Each one was fetched from the configured NVIDIA repository and
+extracted with `dpkg-deb -x /`:
+
+| Piece | Package | Why it is needed |
+| --- | --- | --- |
+| `bin/tileiras` 13.3.36 | `cuda-tileiras-13-3` | the Tile IR assembler `cutile-compiler` invokes; ships with 13.2+ |
+| `version.json` 13.3.1 | `cuda-toolkit-13-3` | toolkit version metadata |
+| `bin/nvcc`, `crt/`, `include/crt` | `cuda-nvcc-13-3`, `cuda-crt-13-3` | compiler the host crates probe |
+| `include/cuda.h`, `lib64/libcudart*` | `cuda-driver-dev-13-3`, `cuda-cudart{,-dev}-13-3` | `cuda-bindings/wrapper.h` and the runtime |
+| `include/curand.h` | `libcurand-dev-13-3` | second include in `wrapper.h`; bindgen fails without it |
+| `nvvm/lib64/libnvvm.so.4` | `libnvvm-13-3` | `tileiras` `dlopen`s it; without it every compile fails as `failed to compile Tile IR program` |
+
+Nothing else moved: `/usr/local/cuda` still points at `cuda-12.8`, the 13.0 tree
+the oxide track pins is untouched, and no package was installed, upgraded or
+removed. Restoring the previous state is `rm -rf /usr/local/cuda-13.3`; the same
+tree can be replaced later by `apt-get install cuda-toolkit-13-3` once dpkg is
+repaired.
 
 ## Layout in this worktree
 
 | Path | Purpose |
 | --- | --- |
-| `scripts/bootstrap-cutile.sh` | Install `cuda-toolkit-13-3` with `--no-install-recommends`, verify `tileiras`, and leave `/usr/local/cuda` pointing where it pointed before. |
-| `scripts/cutile-env.sh` | `CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3` and `PATH`. Never sourced in the same shell as `scripts/oxide-env.sh`, which pins 13.0. |
+| `scripts/cutile-env.sh` | `CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3`, `CUTILE_TILEIRAS_PATH`, `PATH`. Never sourced in the same shell as `scripts/oxide-env.sh`, which pins 13.0. |
 | `examples/cutile/` | Crate `mage-cutile`: the five kernels, the same CLI and file contract as `examples/oxide`. |
 | `examples/cutile/rust-toolchain.toml` | Pin the stable channel (1.98.1 today), unlike the oxide track's pinned nightly. |
 | `docs/experiments/mage-004.md` | Measurement record: method, retained values, and the variants that measured worse. |
@@ -96,25 +115,35 @@ a cuTile binary needs no change to the `mage` package.
 
 ## Phases
 
-### Phase 0 — toolkit and smoke test (the gate)
+### Phase 0 — toolkit and smoke test (the gate) — **passed 2026-09-10**
 
 ```bash
-# one-time, as root through WSL; no driver package is touched
-wsl -d Ubuntu-22.04 -u root bash -lc \
-  'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cuda-toolkit-13-3'
-ls /usr/local/cuda-13.3/bin/tileiras
-
-# upstream smoke test, from ~/code/cutile-rs
-export CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3
-cargo +1.98.1 run -p cutile-examples --example hello_world
-cargo +1.98.1 run -p cutile-examples --example saxpy
-cargo +1.98.1 run -p cutile-examples --example gemm
+source scripts/cutile-env.sh
+cd ~/code/cutile-rs   # upstream v0.3.1 clone used for the smoke test
+for ex in hello_world saxpy gemm rms_norm softmax; do
+  cargo +1.98.1 run --quiet -p cutile-examples --example "$ex"
+done
 ```
 
-Gate: `hello_world` prints its tile line on the 4090 and `gemm` produces a
-correct result. If Tile IR cannot target sm_89, stop and report the track as
-unavailable with the exact error — [kernel-exploration.md](kernel-exploration.md)
-treats an unavailable mode as a result to report, not a workaround to invent.
+Result on the RTX 4090 through WSL2:
+
+| Example | Outcome |
+| --- | --- |
+| `hello_world` | `Hello, I am program <0, 0, 0> in a kernel with <1, 1, 1> programs.` |
+| `saxpy`, `gemm`, `rms_norm`, `softmax` | exit 0, printed values match their checks (`gemm` 8192, `softmax` rows sum to 1) |
+
+Tile IR does target sm_89, so the track is live and no "unavailable" note is
+needed. Two prerequisites surfaced during the build, both now in place:
+
+- **`libnvvm.so`.** `tileiras` accepts the bytecode, writes the object, then
+  fails with only `error: failed to compile Tile IR program` (exit 5) because it
+  `dlopen`s `$CUDA_TOOLKIT_PATH/nvvm/lib64/libnvvm.so` and that directory was
+  absent from the minimal extraction. Found with
+  `strace -f -e trace=openat tileiras ... | grep ENOENT`. `libnvvm-13-3` fixes it.
+- **`curand.h`.** `cuda-bindings`'s build script runs bindgen over
+  `wrapper.h`, which includes `<cuda.h>` and `<curand.h>`; `libcurand-dev-13-3`
+  supplies the second.
+
 Do not build the `cuda-tile-rs` member: it is excluded from default-members
 because its build downloads and compiles LLVM.
 
@@ -176,19 +205,30 @@ profiling commands next to the oxide ones.
 
 | Risk | Deciding test | If it fails |
 | --- | --- | --- |
-| sm_89 is not a Tile IR target for these kernels | Phase 0 `hello_world`, `gemm` | Keep the exact error, publish the track as unavailable, keep the oxide numbers. |
-| Driver 591.74 rejects the emitted bytecode version | Phase 0 | Pin `CUTILE_BYTECODE_VERSION=13.2`, or install the 13.2 toolkit next to 13.3. |
+| ~~sm_89 is not a Tile IR target~~ | Phase 0 `hello_world`, `saxpy`, `gemm`, `rms_norm`, `softmax` | **Resolved:** all five run on the 4090. |
+| ~~Driver 591.74 rejects the emitted bytecode version~~ | Phase 0 compile path | **Resolved:** `tileiras --list-versions` reports 13.1, 13.2, 13.3 and compiles sm_89 cubins. |
 | JIT compile time lands inside the capture | Timing record and nsys trace | Warm every specialization before capture; the harness already separates warmup. |
 | Tile shape is part of the specialization, so a sweep recompiles | Wall clock of Phase 1 | Keep shapes fixed as the earlier rounds do; use `-1` dimensions where the contract allows. |
 | The tile model cannot express CSR gather | Phase 2 | `*_tko` raw pointers, measured against the safe path; report the cost. |
 | The results differ from oxide by less than the harness resolves | Phase 3 | The difference is the finding; both binaries are retained. |
 
-## First commands once the plan is approved
+## Next: Phase 1, matmul in `examples/cutile`
 
 ```bash
-wsl -d Ubuntu-22.04 -u root bash -lc \
-  'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cuda-toolkit-13-3'
-wsl -d Ubuntu-22.04 -lc 'rustup toolchain install 1.98.1 --profile minimal'
-wsl -d Ubuntu-22.04 --cd ~/code/cutile-rs -lc \
-  'CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 cargo +1.98.1 run -p cutile-examples --example hello_world'
+# scaffold the crate beside the oxide one, pinned to the stable toolchain
+mkdir -p examples/cutile/src
+# Cargo.toml: cutile = "=0.3.1", cuda-core = "=0.3.1", serde, serde_json, libloading
+# rust-toolchain.toml: channel = "1.98.1"
+
+source scripts/cutile-env.sh
+cd examples/cutile && cargo build --release
+../../mage profile-exec --backend nsys --capture-range cuda \
+  --output-dir artifacts/cutile-trace -- \
+  examples/cutile/target/release/mage-cutile artifacts/mage-001/matmul \
+  --iterations 100 --capture
 ```
+
+The first target is one operation end to end: the same input files, the same
+full-output check against PyTorch, and per-launch kernel durations out of Nsight
+Systems. Everything after that reuses the harness the oxide track already
+established.
