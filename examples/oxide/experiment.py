@@ -171,6 +171,10 @@ def run_suite(binary, output, small=False, implementation="oxide", experiment_id
                   ("neighbor", [7, 9, 0], False, "neighbor-no-edges"),
                   ("neighbor", [1, 5, 9], False, "neighbor-duplicates"),
                   ("matmul", [1, 1, 1], False, "matmul-one")]
+    if ops:
+        # The small-case extras are added after the filter, so an operation that
+        # was not asked for would otherwise still run.
+        cases = [case for case in cases if case[0] in ops]
     results = []
     for op, dims, constant, name in cases:
         directory = output / name
