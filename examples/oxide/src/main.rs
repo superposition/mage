@@ -67,6 +67,108 @@ mod kernels {
         }
     }
 
+    /// Register-tiled matmul: 64x64 block tile, 4x4 per thread, 16-deep K steps.
+    ///
+    /// Each thread reuses four A values against four B values, so shared-memory
+    /// traffic per multiply-add is a quarter of the one-output-per-thread kernel
+    /// above. Global loads move four floats per instruction into shared memory.
+    /// The host launches this only when `m` and `n` are multiples of 64 and `k` of
+    /// 16; `tiled_matmul` covers every other shape, including the edges.
+    #[kernel]
+    pub fn tiled_matmul_registers(
+        n: u32,
+        k: u32,
+        a: &[f32],
+        b: &[f32],
+        mut out: DisjointSlice<f32, thread::Runtime2DIndex>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+
+        static mut AS: SharedArray<f32, 1024> = SharedArray::UNINIT; // 64 rows x 16 columns
+        static mut BS: SharedArray<f32, 1024> = SharedArray::UNINIT; // 16 rows x 64 columns
+        let tx = thread::threadIdx_x() as usize; // 0..16, column group
+        let ty = thread::threadIdx_y() as usize; // 0..16, row group
+        let tid = ty * 16 + tx;
+        let kk = k as usize;
+        let nn = n as usize;
+        let row0 = thread::blockIdx_y() as usize * 64;
+        let col0 = thread::blockIdx_x() as usize * 64;
+        let mut acc = [[0.0f32; 4]; 4];
+        let mut step = 0usize;
+        while step < kk {
+            // One quad per thread: A is loaded row-major, B column-block-major.
+            let a_start = (row0 + tid / 4) * kk + step + (tid % 4) * 4;
+            if let Some(quad) = vector::as_vectors::<F32x4>(&a[a_start..a_start + 4]) {
+                let v = quad[0].as_slice();
+                let slot = (tid / 4) * 16 + (tid % 4) * 4;
+                unsafe {
+                    AS[slot] = v[0];
+                    AS[slot + 1] = v[1];
+                    AS[slot + 2] = v[2];
+                    AS[slot + 3] = v[3];
+                }
+            }
+            let b_start = (step + tid / 16) * nn + col0 + (tid % 16) * 4;
+            if let Some(quad) = vector::as_vectors::<F32x4>(&b[b_start..b_start + 4]) {
+                let v = quad[0].as_slice();
+                let slot = (tid / 16) * 64 + (tid % 16) * 4;
+                unsafe {
+                    BS[slot] = v[0];
+                    BS[slot + 1] = v[1];
+                    BS[slot + 2] = v[2];
+                    BS[slot + 3] = v[3];
+                }
+            }
+            thread::sync_threads();
+            let mut i = 0usize;
+            while i < 16 {
+                let mut av = [0.0f32; 4];
+                let mut r = 0usize;
+                while r < 4 {
+                    unsafe {
+                        av[r] = AS[(ty * 4 + r) * 16 + i];
+                    }
+                    r += 1;
+                }
+                let mut bv = [0.0f32; 4];
+                let mut c = 0usize;
+                while c < 4 {
+                    unsafe {
+                        bv[c] = BS[i * 64 + tx * 4 + c];
+                    }
+                    c += 1;
+                }
+                r = 0;
+                while r < 4 {
+                    c = 0;
+                    while c < 4 {
+                        acc[r][c] += av[r] * bv[c];
+                        c += 1;
+                    }
+                    r += 1;
+                }
+                i += 1;
+            }
+            thread::sync_threads();
+            step += 16;
+        }
+        // SAFETY: the host validated `m * n` output elements and launched exactly
+        // one 64x64 tile per block, so every written cell is inside the buffer and
+        // belongs to this block alone.
+        let out_ptr = out.as_mut_ptr();
+        let mut r = 0usize;
+        while r < 4 {
+            let mut c = 0usize;
+            while c < 4 {
+                unsafe {
+                    *out_ptr.add((row0 + ty * 4 + r) * nn + col0 + tx * 4 + c) = acc[r][c];
+                }
+                c += 1;
+            }
+            r += 1;
+        }
+    }
+
     #[kernel]
     pub fn bias_gelu(width: u32, x: &[f32], bias: &[f32], mut out: DisjointSlice<f32>) {
         let index = thread::index_1d();
@@ -144,6 +246,92 @@ mod kernels {
                 *out.as_mut_ptr().add(base + j) = (x[base + j] - mean) * inv * gamma[j] + beta[j];
             }
             j += 256;
+        }
+    }
+
+    /// One warp per row: 128-bit quad access and shuffle reductions, no barriers.
+    ///
+    /// The host launches this only when `width` is a multiple of four, so the quad
+    /// views exist; the scalar `layer_norm` handles every other width.
+    #[kernel]
+    pub fn layer_norm_warp(
+        width: u32,
+        rows: u32,
+        x: &[f32],
+        gamma: &[f32],
+        beta: &[f32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+        use cuda_device::warp;
+
+        let d = width as usize;
+        let tid = thread::threadIdx_x() as usize;
+        let lane = tid & 31;
+        // The host fixes 256 threads per block, so each block owns eight rows.
+        let row = thread::blockIdx_x() as usize * 8 + (tid >> 5);
+        if row >= rows as usize {
+            return;
+        }
+        let base = row * d;
+        let Some(quads) = vector::as_vectors::<F32x4>(&x[base..base + d]) else {
+            return;
+        };
+        let Some(gamma_quads) = vector::as_vectors::<F32x4>(gamma) else {
+            return;
+        };
+        let Some(beta_quads) = vector::as_vectors::<F32x4>(beta) else {
+            return;
+        };
+
+        let mut sum = 0.0f32;
+        let mut q = lane;
+        while q < quads.len() {
+            let v = quads[q].as_slice();
+            sum += v[0] + v[1] + v[2] + v[3];
+            q += 32;
+        }
+        let mut offset = 16u32;
+        while offset > 0 {
+            sum += warp::shuffle_down_f32(sum, offset);
+            offset >>= 1;
+        }
+        let mean = warp::shuffle_f32(sum, 0) / d as f32;
+
+        let mut variance = 0.0f32;
+        q = lane;
+        while q < quads.len() {
+            let v = quads[q].as_slice();
+            let (c0, c1, c2, c3) = (v[0] - mean, v[1] - mean, v[2] - mean, v[3] - mean);
+            variance += c0 * c0 + c1 * c1 + c2 * c2 + c3 * c3;
+            q += 32;
+        }
+        offset = 16;
+        while offset > 0 {
+            variance += warp::shuffle_down_f32(variance, offset);
+            offset >>= 1;
+        }
+        let inv = 1.0
+            / cuda_device::float::sqrt_rn_f32(warp::shuffle_f32(variance, 0) / d as f32 + 1e-5);
+
+        // SAFETY: the host validated `rows * width` output elements and each warp
+        // owns the disjoint row at `base`, so this view aliases no other warp.
+        let out_row = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().add(base), d) };
+        let Some(out_quads) = vector::as_vectors_mut::<F32x4>(out_row) else {
+            return;
+        };
+        q = lane;
+        while q < quads.len() {
+            let xv = quads[q].as_slice();
+            let gv = gamma_quads[q].as_slice();
+            let bv = beta_quads[q].as_slice();
+            out_quads[q] = F32x4::new([
+                (xv[0] - mean) * inv * gv[0] + bv[0],
+                (xv[1] - mean) * inv * gv[1] + bv[1],
+                (xv[2] - mean) * inv * gv[2] + bv[2],
+                (xv[3] - mean) * inv * gv[3] + bv[3],
+            ]);
+            q += 32;
         }
     }
 
@@ -365,40 +553,77 @@ fn run() -> Result<(), Box<dyn Error>> {
         // each kernel receives the required launch shape and distinct output.
         unsafe {
             match manifest.op.as_str() {
-                "matmul" => module.tiled_matmul(
-                    &stream,
-                    LaunchConfig {
-                        grid_dim: (
-                            (dims[1] as u32).div_ceil(16),
-                            (dims[0] as u32).div_ceil(16),
-                            1,
-                        ),
-                        block_dim: (16, 16, 1),
-                        shared_mem_bytes: 0,
-                    },
-                    dims[0] as u32,
-                    dims[1] as u32,
-                    dims[2] as u32,
-                    &a_dev,
-                    &b_dev,
-                    cuda_host::RowWidth::new(&mut out, dims[1] as u32),
-                ),
+                "matmul" => {
+                    let (m, n, k) = (dims[0], dims[1], dims[2]);
+                    if m % 64 == 0 && n % 64 == 0 && k % 16 == 0 {
+                        // Square 64x64 tiles, no edge masking needed.
+                        module.tiled_matmul_registers(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: ((n / 64) as u32, (m / 64) as u32, 1),
+                                block_dim: (16, 16, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            n as u32,
+                            k as u32,
+                            &a_dev,
+                            &b_dev,
+                            cuda_host::RowWidth::new(&mut out, n as u32),
+                        )
+                    } else {
+                        module.tiled_matmul(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (
+                                    (dims[1] as u32).div_ceil(16),
+                                    (dims[0] as u32).div_ceil(16),
+                                    1,
+                                ),
+                                block_dim: (16, 16, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            dims[0] as u32,
+                            dims[1] as u32,
+                            dims[2] as u32,
+                            &a_dev,
+                            &b_dev,
+                            cuda_host::RowWidth::new(&mut out, dims[1] as u32),
+                        )
+                    }
+                }
                 "gelu" => {
                     module.bias_gelu(&stream, linear, dims[1] as u32, &a_dev, &b_dev, &mut out)
                 }
-                "layernorm" => module.layer_norm(
-                    &stream,
-                    LaunchConfig {
-                        grid_dim: (dims[0] as u32, 1, 1),
+                "layernorm" => {
+                    let rows = dims[0] as u32;
+                    let width = dims[1] as u32;
+                    // Eight rows per block, one warp each.
+                    let block = LaunchConfig {
+                        grid_dim: (rows.div_ceil(8), 1, 1),
                         block_dim: (256, 1, 1),
                         shared_mem_bytes: 0,
-                    },
-                    dims[1] as u32,
-                    &a_dev,
-                    &b_dev,
-                    &c_dev,
-                    &mut out,
-                ),
+                    };
+                    if width % 4 == 0 {
+                        module.layer_norm_warp(
+                            &stream, block, width, rows,
+                            &a_dev, &b_dev, &c_dev, &mut out,
+                        )
+                    } else {
+                        module.layer_norm(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (rows, 1, 1),
+                                block_dim: (256, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            width,
+                            &a_dev,
+                            &b_dev,
+                            &c_dev,
+                            &mut out,
+                        )
+                    }
+                }
                 "triangle" => module.triangle(
                     &stream,
                     linear,
