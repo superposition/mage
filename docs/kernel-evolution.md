@@ -113,21 +113,31 @@ The run stopped after eight consecutive rejections. Final parameters:
 `{block: 64x64, k_step: 32, transpose_a: true, quad_stage: true, staging: guarded,
 thread_tile: 4x4}`.
 
-The confirmation step re-measured the final incumbent against the committed kernel in
-fresh processes and read 78.70 against 82.29 µs (+4.36%); a second confirmation read 78.85
-against 82.93 µs (+4.94%). **Both of those overstate the gain.** Re-measured with four
-unrecorded warm-up pairs and eight interleaved rounds of 100 iterations each, in a fresh
-input directory per arm, the same pair gives **8 of 8 rounds in favour of the retained
-kernel, median +2.47%, mean +2.64%, range +2.46% to +3.70%, standard deviation 0.40%**,
-with maximum absolute error 0.0.
+The first confirmations of this run read +4.36% and +4.94%, and **both overstated the
+gain**. The confirmation step now uses the protocol that measures it:
 
-The difference is a systematic property of the machine, not noise: in that session the
-committed kernel read 77.82 µs on the first measurement after an idle period and 82.94 µs
-once its clocks had settled, a 6% swing in one direction. A three-round confirmation that
-starts cold therefore reads a larger gain than the configuration has. The accepted steps
-are unaffected in direction: their ratios (0.778, 0.912, 0.924) are an order of magnitude
-outside that bias, and the same three steps were accepted with a different seed. Only the
-quoted total needed correcting, from about 5% to about 2.5%.
+- two prepared input directories per arm, reused across rounds, so no round pays its own
+  cold-cache cost;
+- four unrecorded warm-up pairs, because the first measurement after an idle period reads
+  several percent fast;
+- eight recorded rounds with the arm order alternating, 150 iterations each;
+- the quoted figure is the **median of the per-round ratios**, with the mean, range and
+  the count of rounds favouring the incumbent recorded beside it
+  (`--confirm-rounds`, `--warmup-pairs` in `scripts/evolve.py`).
+
+Under that protocol the retained configuration reads **80.90 µs against 82.94 µs, median
++2.47%, 8 of 8 rounds in favour of the incumbent**, maximum absolute error 0.0. The same
+pair read 0.9753 in seven of eight rounds; one round read 0.8846.
+
+The mean of the same eight rounds is +4.12%, and that spread is the second finding: the
+machine produces occasional clock-boost excursions of about 10% that land on **either**
+arm. In that run the incumbent read 72.70 µs once and the committed kernel read 77.82 µs
+once, against 80.90 and 82.94 µs otherwise. So a mean over a few rounds, or a rule that
+takes the fastest round on each arm, is biased by whichever arm catches the boost first.
+The median over eight alternating rounds is stable to 0.4% across sessions; the mean is
+not. The accepted steps are unaffected in direction: their ratios (0.778, 0.912, 0.924)
+are an order of magnitude outside the excursions, and the same three steps were accepted
+with a different seed. Only the quoted total moved, from about 5% to about 2.5%.
 
 Ledger and summary for the matrix-multiply run are committed under
 `docs/assets/results/evolution-loop/matmul-ledger.jsonl` and `matmul-summary.json`.
@@ -211,10 +221,15 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
 - The retained configuration is a candidate, not a published result: it has not been
   captured with Nsight, has not been confirmed in a fresh session, and does not carry the
   correctness enumeration (fallback kernels, edge shapes) that the mage-003 record does.
-- A short confirmation overstates a gain. The loop compares the fastest observed round on
-  each arm and refuses to judge a generation whose control drifts more than 3%, which
-  catches reversals but not the clock boost of a first measurement. Warm-up pairs before
-  the measured rounds are required, and a quoted total needs more than three rounds.
+- The per-generation accept rule still compares the fastest observed round on each arm.
+  That is deliberate — it is a screen for reversals, and it refuses to judge a generation
+  whose control drifts more than 3% — but it inherits the clock-boost bias: one boosted
+  round on the candidate arm can carry a generation. With the ratios this run accepted
+  (0.778, 0.912, 0.924) the screen is not close to that bias; a rule that admits smaller
+  gains should compare per-round ratios instead.
+- The confirmation measures the *event span around the call*, on one shape, in one session.
+  Its median ratio is stable to 0.4%, but the excursions described above mean a single
+  round is not a measurement.
 
 ## Next
 

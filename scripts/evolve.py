@@ -249,6 +249,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="tolerated relative drift of the committed control (max/min - 1)")
     parser.add_argument("--out", default=None,
                         help="result namespace (default artifacts/evolution/<utc>_<op>)")
+    parser.add_argument("--confirm-rounds", type=int, default=8,
+                        help="confirmation rounds after the loop (the in-run rounds are separate)")
+    parser.add_argument("--warmup-pairs", type=int, default=4,
+                        help="unrecorded incumbent/committed pairs before the confirmation rounds")
     parser.add_argument("--seed", type=int, default=20260910,
                         help="determinism for input generation and measurement-order ties")
     parser.add_argument("--start-json", default=None,
@@ -262,6 +266,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--rounds must be at least 1")
     if args.iterations < 1 or args.warmup < 0:
         raise SystemExit("--iterations must be positive and --warmup non-negative")
+    if args.confirm_rounds < 1 or args.warmup_pairs < 0:
+        raise SystemExit("--confirm-rounds must be at least 1 and --warmup-pairs non-negative")
     return args
 
 
@@ -628,16 +634,29 @@ def main(argv: list[str] | None = None) -> int:
     # --- end of run: fresh-process confirmation ---------------------------
     confirmation: list[dict] = []
     try:
-        for round_index in range(args.rounds):
+        # Two prepared input directories per arm, reused across rounds: a fresh
+        # directory per round would charge each round its own cold-cache cost, which
+        # is not part of the comparison. The arm order alternates every round, and
+        # the first measurements after an idle period are burned in unrecorded, since
+        # they read several percent fast and inflate the reported gain.
+        confirm_dirs = {}
+        for variant in (incumbent_slot, "committed"):
+            for slot in (0, 1):
+                directory = work / "confirm" / f"{variant}-{slot}"
+                install_inputs(inputs_dir, directory, variant)
+                confirm_dirs[(variant, slot)] = directory
+        for _ in range(args.warmup_pairs):
+            for variant in (incumbent_slot, "committed"):
+                measure_variant(confirm_dirs[(variant, 0)], variant)
+        for round_index in range(args.confirm_rounds):
             # The final incumbent lives in whichever slot the last successful
             # build rendered it into, so that slot is what the confirmation reads.
-            order = [variant for variant in round_order(base_order, round_index)
-                     if variant in (incumbent_slot, "committed")]
+            order = ([incumbent_slot, "committed"] if round_index % 2 == 0
+                     else ["committed", incumbent_slot])
             row = {"round": round_index + 1, "order": list(order),
                    "incumbent_variant": incumbent_slot}
             for variant in order:
-                directory = work / "confirm" / f"r{round_index + 1}" / variant
-                install_inputs(inputs_dir, directory, variant)
+                directory = confirm_dirs[(variant, round_index % 2)]
                 record = measure_variant(directory, variant)
                 row[f"{variant}_median_us"] = record.get("median_us")
                 row[f"{variant}_mean_us"] = record.get("mean_us")
@@ -668,6 +687,24 @@ def main(argv: list[str] | None = None) -> int:
         if best_median_us and start_median_us else None
     )
 
+    confirmation_ratios = [
+        row["incumbent_median_us"] / row["committed_median_us"]
+        for row in confirmation
+        if row.get("incumbent_median_us") and row.get("committed_median_us")
+    ]
+    confirmation_statistics = None
+    if confirmation_ratios:
+        gains = [1.0 - ratio for ratio in confirmation_ratios]
+        confirmation_statistics = {
+            "rounds": len(gains),
+            "median": statistics.median(gains),
+            "mean": statistics.fmean(gains),
+            "min": min(gains),
+            "max": max(gains),
+            "stdev": statistics.stdev(gains) if len(gains) > 1 else 0.0,
+            "rounds_favouring_incumbent": sum(1 for gain in gains if gain > 0),
+        }
+
     summary = {
         "run_id": run_id,
         "op": args.op,
@@ -690,6 +727,13 @@ def main(argv: list[str] | None = None) -> int:
         ],
         "noisy_generations": [entry["generation"] for entry in entries if entry["noisy"]],
         "confirmation": confirmation,
+        "confirmation_statistics": confirmation_statistics,
+        "confirmation_protocol": {
+            "rounds": args.confirm_rounds,
+            "warmup_pairs": args.warmup_pairs,
+            "iterations": args.iterations,
+            "warmup_iterations": args.warmup,
+        },
         "incumbent_variant": incumbent_slot,
         "last_build_ok": bool(entries and entries[-1]["build"]["ok"]),
         "rounds_measured": rounds_completed,
@@ -722,6 +766,14 @@ def main(argv: list[str] | None = None) -> int:
              if improvement_vs_committed is not None else "")
           + (f" | vs start {improvement_vs_start:+.2%}"
              if improvement_vs_start is not None else ""))
+    if confirmation_statistics:
+        print(f"confirmation {confirmation_statistics['rounds']} rounds after "
+              f"{args.warmup_pairs} warm-up pairs: median "
+              f"{confirmation_statistics['median']:+.2%}, mean "
+              f"{confirmation_statistics['mean']:+.2%}, range "
+              f"{confirmation_statistics['min']:+.2%}..{confirmation_statistics['max']:+.2%}, "
+              f"{confirmation_statistics['rounds_favouring_incumbent']}/"
+              f"{confirmation_statistics['rounds']} favour the incumbent")
     print(f"ledger       {ledger_path}")
     print(f"summary      {out / 'summary.json'}")
 
