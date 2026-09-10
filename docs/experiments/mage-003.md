@@ -7,7 +7,7 @@ math: true
 ---
 The second field note stopped at the point where the Rust matrix multiply reached 141.7 µs of GPU kernel time and layer normalization reached 11.1 µs, from 344.0 µs and 18.6 µs in the first comparison. This note records the stages that followed. The next matrix-multiply change was chosen from the **scaling of a deliberately worse variant**, which separated shared-memory load instructions from arithmetic and occupancy; the next layer-normalization change was chosen from **how many threads the grid could keep resident**. Several other attempts were measured and not adopted, and they are recorded here with the metric each one used.
 
-The [first field note](../experiments/mage-001/) holds the original comparison, the [second](../experiments/mage-002/) the first rewrite; the journal entry for this work is [How the kernel time fell, step by step](https://superposition.github.io/journal/how-the-kernel-time-fell-step-by-step/).
+The [first field note]({{ '/experiments/mage-001/' | relative_url }}) holds the original comparison, the [second]({{ '/experiments/mage-002/' | relative_url }}) the first rewrite; the journal entry for this work is [How the kernel time fell, step by step](https://superposition.github.io/journal/how-the-kernel-time-fell-step-by-step/).
 
 ## Three stages per kernel
 
@@ -31,7 +31,7 @@ Both arrangements are correct and both spend shared-memory traffic and synchroni
 
 ## The first rewrite changed the tile and the reduction
 
-The first rewrite is the subject of [field note 002](../experiments/mage-002/), and the measurements are unchanged here. Two substitutions carry it:
+The first rewrite is the subject of [field note 002]({{ '/experiments/mage-002/' | relative_url }}), and the measurements are unchanged here. Two substitutions carry it:
 
 - `tiled_matmul_registers` keeps a **4 × 4 tile of outputs per thread**: sixteen multiply-adds from eight shared reads, or 0.5 reads per multiply-add, a quarter of the original. The block tile is 64 × 64, the K dimension advances in steps of 32, the tiles are loaded through 128-bit global loads into 16384 bytes of shared memory, and the grid falls from 4096 blocks to 256. Registers rise from 37 to 55.
 - `layer_norm_warp` gives **one warp to a row**: 128-bit quads per lane, and the two reductions end in `shuffle_down` offsets instead of shared memory and barriers. Shared memory falls to zero and the grid from 4096 blocks to 512; registers rise from 27 to 40.
@@ -284,4 +284,4 @@ uv run --script scripts/plot-kernel-progression.py --experiment mage-003
 
 `plot-comparison.py` reads the committed evidence, validates the sample counts and correctness flags, and writes the four standard views with their mobile variants, downloadable PNGs and the value table used above. `plot-kernel-progression.py` documents the six stage values in the field note, checks the five that exist in a committed namespace against it, and writes the progression figure. The pages need only the committed files.
 
-[Measurements and reproduction in GitHub](https://github.com/superposition/mage/blob/master/docs/experiments/mage-003.md) · [The first field note](../experiments/mage-001/) · [The second field note](../experiments/mage-002/)
+[Measurements and reproduction in GitHub](https://github.com/superposition/mage/blob/master/docs/experiments/mage-003.md) · [The first field note]({{ '/experiments/mage-001/' | relative_url }}) · [The second field note]({{ '/experiments/mage-002/' | relative_url }})
