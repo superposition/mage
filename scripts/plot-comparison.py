@@ -4,12 +4,16 @@
 # ///
 """Render the committed evidence into responsive, downloadable scientific plots.
 
-Run: uv run --script scripts/plot-comparison.py
+Run: uv run --script scripts/plot-comparison.py --experiment mage-001
+The experiment selects the result and figure namespaces under docs/assets. It
+defaults to mage-001 and can also be set through MAGE_EXPERIMENT.
 The Pages build uses the committed SVGs and requires no plotting dependencies.
 """
+import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import statistics
 
@@ -19,8 +23,15 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "docs/assets/results/mage-001"
-OUT = ROOT / "docs/assets/figures/mage-001"
+EXPERIMENT = "mage-001"
+SOURCE = ROOT / "docs/assets/results" / EXPERIMENT
+OUT = ROOT / "docs/assets/figures" / EXPERIMENT
+# The metadata sentence names the implementations a figure compares, so it
+# travels with the experiment. mage-001 keeps its published wording.
+BASELINE = {
+    "mage-001": "PyTorch baseline versus first Triton and cuda-oxide Rust implementations.",
+    "mage-002": "PyTorch and Triton baselines versus the rewritten cuda-oxide Rust kernels.",
+}
 LABELS = {"matmul": "Matrix multiplication", "gelu": "Bias + GELU", "layernorm": "LayerNorm",
           "triangle": "Triangle contraction", "neighbor": "Neighbor aggregation"}
 LANGUAGES = ["python", "triton", "rust"]
@@ -32,6 +43,11 @@ METRICS = {
     "event": ("Time around the call", "CUDA-event microseconds · lower is better"),
     "launches": ("Kernel launches", "Launches per operation"),
 }
+
+
+def baseline_note():
+    return BASELINE.get(EXPERIMENT, "PyTorch and Triton baselines versus the cuda-oxide Rust kernels "
+                                    f"published as {EXPERIMENT}.")
 
 
 def read_data():
@@ -107,7 +123,7 @@ def plot(data, metric, mobile):
     name = f"comparison-{metric}{'-mobile' if mobile else ''}"
     fig.savefig(OUT / f"{name}.svg", metadata={"Date": None, "Description":
         "RTX 4090; same FP32 inputs. Each row has its own zero-based scale. "
-        "PyTorch baseline versus first Triton and cuda-oxide Rust implementations. "
+        f"{baseline_note()} "
         "See comparison-results.json and comparison-profiles.json for evidence."})
     svg = OUT / f"{name}.svg"
     svg.write_bytes(b"\n".join(line.rstrip() for line in svg.read_bytes().splitlines()) + b"\n")
@@ -180,9 +196,17 @@ def plot_views(data, mobile):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--experiment", default=os.environ.get("MAGE_EXPERIMENT", "mage-001"),
+                        help="namespace under docs/assets/results and docs/assets/figures")
+    args = parser.parse_args()
+    EXPERIMENT = args.experiment
+    SOURCE = ROOT / "docs/assets/results" / EXPERIMENT
+    OUT = ROOT / "docs/assets/figures" / EXPERIMENT
     # Embed glyph outlines so downloads render identically without local fonts.
     # The page provides descriptive alt text and an accessible numeric table.
-    plt.rcParams.update({"font.family": "DejaVu Sans", "svg.fonttype": "path", "svg.hashsalt": "mage-001-comparison"})
+    plt.rcParams.update({"font.family": "DejaVu Sans", "svg.fonttype": "path",
+                         "svg.hashsalt": f"{EXPERIMENT}-comparison"})
     OUT.mkdir(parents=True, exist_ok=True)
     data = read_data()
     for metric in METRICS:
@@ -190,7 +214,10 @@ if __name__ == "__main__":
             plot(data, metric, mobile)
     for mobile in (False, True):
         plot_views(data, mobile)
-    target = ROOT / "docs/_data/profile_comparison.json"
+    # mage-001 keeps the published data name its field note reads through site.data.
+    name = ("profile_comparison.json" if EXPERIMENT == "mage-001"
+            else f"profile_comparison_{EXPERIMENT.replace('-', '_')}.json")
+    target = ROOT / "docs/_data" / name
     target.parent.mkdir(exist_ok=True)
     target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(data, indent=2))
