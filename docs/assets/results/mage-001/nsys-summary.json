@@ -1,0 +1,137 @@
+[
+  {
+    "operation": "matmul",
+    "language": "rust",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "tiled_matmul"
+    ],
+    "session_id": 1,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/matmul/rust/mage-nsys-fvlwl7gg",
+    "status": "complete"
+  },
+  {
+    "operation": "matmul",
+    "language": "python",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+    ],
+    "session_id": 2,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/matmul/python/mage-nsys-4rdex796",
+    "status": "complete"
+  },
+  {
+    "operation": "gelu",
+    "language": "rust",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "bias_gelu"
+    ],
+    "session_id": 3,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/gelu/rust/mage-nsys-jldjr1ki",
+    "status": "complete"
+  },
+  {
+    "operation": "gelu",
+    "language": "python",
+    "backend": "nsys",
+    "launches": 200,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+      "void at::native::vectorized_elementwise_kernel<(int)4, at::native::GeluCUDAKernelImpl(at::TensorIteratorBase &, at::native::GeluType)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 2)]::operator ()() const::[lambda(float) (instance 1)], std::array<char *, (unsigned long)2>>(int, T2, T3)"
+    ],
+    "session_id": 4,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/gelu/python/mage-nsys-fdn3dykr",
+    "status": "complete"
+  },
+  {
+    "operation": "layernorm",
+    "language": "rust",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "layer_norm"
+    ],
+    "session_id": 5,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/layernorm/rust/mage-nsys-xn8u6wfp",
+    "status": "complete"
+  },
+  {
+    "operation": "layernorm",
+    "language": "python",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "void at::native::<unnamed>::vectorized_layer_norm_kernel<float, float, (bool)0>(int, T2, const T1 *, const T1 *, const T1 *, T2 *, T2 *, T1 *)"
+    ],
+    "session_id": 6,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/layernorm/python/mage-nsys-6b5a82m8",
+    "status": "complete"
+  },
+  {
+    "operation": "triangle",
+    "language": "rust",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "triangle"
+    ],
+    "session_id": 7,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/triangle/rust/mage-nsys-hwdqdf1c",
+    "status": "complete"
+  },
+  {
+    "operation": "triangle",
+    "language": "python",
+    "backend": "nsys",
+    "launches": 300,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "ampere_sgemm_128x128_nn",
+      "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 3)]::operator ()() const::[lambda() (instance 7)]::operator ()() const::[lambda(float) (instance 1)]>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)"
+    ],
+    "session_id": 8,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/triangle/python/mage-nsys-3mpgmi51",
+    "status": "complete"
+  },
+  {
+    "operation": "neighbor",
+    "language": "rust",
+    "backend": "nsys",
+    "launches": 100,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "neighbor"
+    ],
+    "session_id": 9,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/neighbor/rust/mage-nsys-xg66e12x",
+    "status": "complete"
+  },
+  {
+    "operation": "neighbor",
+    "language": "python",
+    "backend": "nsys",
+    "launches": 400,
+    "requested_iterations": 100,
+    "kernel_names": [
+      "void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::BinaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)",
+      "void at::native::indexFuncLargeIndex<float, long, unsigned int, (int)2, (int)2, (int)-2, (bool)1, at::native::<unnamed>::ReduceAdd>(at::cuda::detail::TensorInfo<T1, T3>, at::cuda::detail::TensorInfo<const T1, T3>, at::cuda::detail::TensorInfo<const T2, T3>, int, int, T3, T3, long, long, const T8 &, T1)",
+      "void at::native::vectorized_elementwise_kernel<(int)4, at::native::FillFunctor<float>, std::array<char *, (unsigned long)1>>(int, T2, T3)",
+      "void at::native::vectorized_gather_kernel<(int)16, long>(char *, char *, T2 *, int, long, long, long, long, bool)"
+    ],
+    "session_id": 10,
+    "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-001-nsys-final/neighbor/python/mage-nsys-t3tfbanj",
+    "status": "complete"
+  }
+]

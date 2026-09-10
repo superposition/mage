@@ -1,0 +1,13 @@
+---
+layout: default
+---
+<article class="page">
+  <header class="article-header">
+    <p class="eyebrow">Journal / {{ page.date | date: "%d %B %Y" }}{% if page.experiment_id %} / {{ page.experiment_id }}{% endif %}</p>
+    <h1>{{ page.title }}</h1>
+    <p class="lede">{{ page.description }}</p>
+    <p class="meta">By Superposition{% if page.updated %} · Updated {{ page.updated | date: "%d %B %Y" }}{% endif %}</p>
+  </header>
+  <div class="prose">{{ content }}</div>
+  {% if page.technical_record %}<aside class="note"><strong>Reproduce the investigation</strong><p><a href="{{ page.technical_record }}">Read the Mage experiment record →</a></p></aside>{% endif %}
+</article>

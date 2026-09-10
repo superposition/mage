@@ -16,8 +16,8 @@ class KernelMetric:
     timestamp: datetime = field(default_factory=datetime.now)
 
     # Launch configuration
-    grid_size: tuple[int, int, int] = (1, 1, 1)
-    block_size: tuple[int, int, int] = (1, 1, 1)
+    grid_size: tuple[int, int, int] | None = None
+    block_size: tuple[int, int, int] | None = None
 
     # Resource usage
     registers_per_thread: int | None = None
@@ -60,8 +60,8 @@ class KernelMetric:
         """Convert to dictionary for storage."""
         d = asdict(self)
         d["timestamp"] = self.timestamp.isoformat()
-        d["grid_size"] = ",".join(map(str, self.grid_size))
-        d["block_size"] = ",".join(map(str, self.block_size))
+        d["grid_size"] = ",".join(map(str, self.grid_size)) if self.grid_size else None
+        d["block_size"] = ",".join(map(str, self.block_size)) if self.block_size else None
         return d
 
     @classmethod
@@ -77,8 +77,10 @@ class KernelMetric:
         return cls(**d)
 
     @property
-    def total_threads(self) -> int:
+    def total_threads(self) -> int | None:
         """Total threads launched."""
+        if self.grid_size is None or self.block_size is None:
+            return None
         grid = self.grid_size[0] * self.grid_size[1] * self.grid_size[2]
         block = self.block_size[0] * self.block_size[1] * self.block_size[2]
         return grid * block
@@ -86,11 +88,8 @@ class KernelMetric:
     @property
     def arithmetic_intensity(self) -> float | None:
         """FLOPs per byte (if data available)."""
-        if self.dram_read_bytes and self.dram_write_bytes:
-            total_bytes = self.dram_read_bytes + self.dram_write_bytes
-            if total_bytes > 0 and self.compute_throughput_pct:
-                # Rough estimate - would need actual FLOP count for accuracy
-                return self.compute_throughput_pct / (total_bytes / 1e9)
+        # Utilization is not an operation count. This requires measured FLOPs
+        # (or an explicitly labelled mathematical estimate supplied by a caller).
         return None
 
 

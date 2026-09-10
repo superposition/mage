@@ -1,0 +1,21 @@
+name: Profiler regression tests
+on:
+  push:
+    branches: [master]
+    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', '.github/workflows/profiler-tests.yml']
+  pull_request:
+    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', '.github/workflows/profiler-tests.yml']
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.9.1
+      - run: pip install -e . pytest
+      - run: pytest tests/test_native_profiler.py -q

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import fields
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,11 @@ class ProfileDB:
         """Initialize database schema."""
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(metrics)")}
+            for field in fields(KernelMetric):
+                if field.name not in existing:
+                    sql_type = "INTEGER" if str(field.type).startswith("int") else "REAL"
+                    conn.execute(f"ALTER TABLE metrics ADD COLUMN {field.name} {sql_type}")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -105,38 +111,13 @@ class ProfileDB:
 
     def _save_metric(self, conn: sqlite3.Connection, session_id: int, metric: KernelMetric) -> int:
         """Save a single metric (internal, uses existing connection)."""
+        data = {"session_id": session_id, **metric.to_dict()}
+        # Column names come exclusively from our dataclass, never user input.
         cursor = conn.execute(
-            """
-            INSERT INTO metrics (
-                session_id, kernel_name, duration_us, timestamp,
-                grid_size, block_size, registers_per_thread, shared_mem_bytes,
-                static_shared_mem_bytes, dynamic_shared_mem_bytes,
-                occupancy, memory_throughput_gbps, compute_throughput_pct,
-                l1_hit_rate, l2_hit_rate, dram_read_bytes, dram_write_bytes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session_id,
-                metric.kernel_name,
-                metric.duration_us,
-                metric.timestamp.isoformat(),
-                ",".join(map(str, metric.grid_size)),
-                ",".join(map(str, metric.block_size)),
-                metric.registers_per_thread,
-                metric.shared_mem_bytes,
-                metric.static_shared_mem_bytes,
-                metric.dynamic_shared_mem_bytes,
-                metric.occupancy,
-                metric.memory_throughput_gbps,
-                metric.compute_throughput_pct,
-                metric.l1_hit_rate,
-                metric.l2_hit_rate,
-                metric.dram_read_bytes,
-                metric.dram_write_bytes,
-            ),
+            f"INSERT INTO metrics ({','.join(data)}) VALUES ({','.join('?' for _ in data)})",
+            tuple(data.values()),
         )
         return cursor.lastrowid
-
     def save_metric(self, session_id: int, metric: KernelMetric) -> int:
         """Save a single metric to an existing session."""
         with self._connect() as conn:

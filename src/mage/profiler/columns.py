@@ -58,6 +58,8 @@ class Column:
 def _format_grid(metric: KernelMetric) -> str:
     """Format grid size as string."""
     g = metric.grid_size
+    if g is None:
+        return "-"
     if g == (0, 0, 0):
         return "auto"  # Dynamic grid from lambda
     if g[1] == 1 and g[2] == 1:
@@ -70,6 +72,8 @@ def _format_grid(metric: KernelMetric) -> str:
 def _format_block(metric: KernelMetric) -> str:
     """Format block size as string."""
     b = metric.block_size
+    if b is None:
+        return "-"
     if b[1] == 1 and b[2] == 1:
         return str(b[0])
     elif b[2] == 1:

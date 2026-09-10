@@ -1,0 +1,415 @@
+{
+  "experiment_id": "mage-001",
+  "utc": "2026-09-10T05:14:29.683704+00:00",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "torch": "2.9.1+cu128",
+  "cuda": "12.8",
+  "python": "3.13.2",
+  "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "oxide_revision": "26754ae52c26c097dc1c465a1e42c4c5d05a3d40",
+  "rust_toolchain": "nightly-2026-08-28",
+  "architecture": "sm_89",
+  "source_sha256": {
+    "src/main.rs": "b0adb4d615c2dfd7aea598f704da5323b0f6d1f6ed30243d75c87771ffad895d",
+    "experiment.py": "638819388aec11cc96c9ff802a80215988b0151ddae2c90d6b01f7d1d2f1ee41",
+    "Cargo.lock": "393c12af25bfebfb5bdc0bc4ce3d1890208ae0dc4ad0d97dab2eb352ce66486c"
+  },
+  "gpu_state": "driver_version, pstate, temperature.gpu, clocks.current.sm [MHz], clocks.current.memory [MHz]\n591.74, P2, 37, 2520 MHz, 10251 MHz",
+  "timing": "CUDA events, inputs resident on device; host submission may affect short kernels",
+  "results": [
+    {
+      "op": "matmul",
+      "dims": [
+        17,
+        19,
+        23
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 1.1920928955078125e-07,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 323,
+      "case": "matmul",
+      "rust_event_mean_us": 4.870399925857782,
+      "python_event_mean_us": 31.187201105058193,
+      "rust_samples_us": [
+        5.119999870657921,
+        4.927999805659056,
+        5.08800009265542,
+        4.095999989658594,
+        5.119999870657921
+      ],
+      "python_samples_us": [
+        45.72800174355507,
+        46.720001846551895,
+        8.191999979317188,
+        34.912001341581345,
+        20.38400061428547
+      ],
+      "rust_run_id": "1789017268370280699-1219",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "56fdc2869e261f078700d959a92da8c99ce72bab992b14b5b11a3fffc771b5f8",
+          "b.bin": "345b720da67048bb58f3413d5ed823eedeeb290998e3bd378af85d24b5fe3f4b"
+        }
+      }
+    },
+    {
+      "op": "gelu",
+      "dims": [
+        3,
+        257
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 3.7997961044311523e-06,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 771,
+      "case": "gelu",
+      "rust_event_mean_us": 3.788800025358796,
+      "python_event_mean_us": 24.889599531888962,
+      "rust_samples_us": [
+        4.095999989658594,
+        3.0720001086592674,
+        4.095999989658594,
+        3.903999924659729,
+        3.776000114157796
+      ],
+      "python_samples_us": [
+        28.063999488949776,
+        25.599999353289604,
+        21.503999829292297,
+        21.503999829292297,
+        27.775999158620834
+      ],
+      "rust_run_id": "1789017268735491824-1312",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "662fe7180380ce2a777338e19f3a9254a198838f15188abb3b9b0d43490f2232",
+          "b.bin": "e4182504cc632b678da5a7f217e099023c70e21ba0e9262d5778e4471573c414"
+        }
+      }
+    },
+    {
+      "op": "layernorm",
+      "dims": [
+        3,
+        257
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 2.384185791015625e-07,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 771,
+      "case": "layernorm",
+      "rust_event_mean_us": 5.22239999845624,
+      "python_event_mean_us": 18.630400113761425,
+      "rust_samples_us": [
+        5.95200015231967,
+        5.119999870657921,
+        5.119999870657921,
+        5.08800009265542,
+        4.832000005990267
+      ],
+      "python_samples_us": [
+        18.432000651955605,
+        13.376000337302685,
+        20.38400061428547,
+        20.479999482631683,
+        20.479999482631683
+      ],
+      "rust_run_id": "1789017268856139537-1318",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "662fe7180380ce2a777338e19f3a9254a198838f15188abb3b9b0d43490f2232",
+          "b.bin": "e4182504cc632b678da5a7f217e099023c70e21ba0e9262d5778e4471573c414",
+          "c.bin": "4594c560bf67a09d56959e7cfdca4a9c3d8c37056f39a964dbe6beba3e7e3e1f"
+        }
+      }
+    },
+    {
+      "op": "triangle",
+      "dims": [
+        7,
+        5
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 5.960464477539063e-08,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 245,
+      "case": "triangle",
+      "rust_event_mean_us": 4.691199958324432,
+      "python_event_mean_us": 49.695999920368195,
+      "rust_samples_us": [
+        5.119999870657921,
+        4.095999989658594,
+        4.095999989658594,
+        5.024000070989132,
+        5.119999870657921
+      ],
+      "python_samples_us": [
+        53.50400134921074,
+        51.19999870657921,
+        44.863998889923096,
+        48.128001391887665,
+        50.783999264240265
+      ],
+      "rust_run_id": "1789017268961019664-1324",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "b68870129d253f9e4eded7d10ac7caadcf9ef9f635fe6c6d3f034cc5668a2bde",
+          "b.bin": "27b3e2a561c212bd78bdc74b48b04c938ae8cd2dea3dcd0000e2ca24ef16dfea"
+        }
+      }
+    },
+    {
+      "op": "neighbor",
+      "dims": [
+        7,
+        9,
+        23
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 2.9802322387695312e-08,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 63,
+      "case": "neighbor",
+      "rust_event_mean_us": 4.8063999973237514,
+      "python_event_mean_us": 42.71999970078468,
+      "rust_samples_us": [
+        5.119999870657921,
+        4.832000005990267,
+        4.095999989658594,
+        4.9600000493228436,
+        5.024000070989132
+      ],
+      "python_samples_us": [
+        51.32799968123436,
+        56.32000043988228,
+        38.495998829603195,
+        33.663999289274216,
+        33.79200026392937
+      ],
+      "rust_run_id": "1789017269075163645-1330",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "57bc8d86d32e981e617de33b90436113e9dd2ed744b64ebdbcf5ce7550d44e60",
+          "b.bin": "dc35d09412fba61fd30fcfb82d26cb45985dbc27d71d3c41e2bac6ba3eceade6",
+          "indices.bin": "e65b9af36b475f633b7933143c52144238dc244c58281a4eeffeed7c95625ccf",
+          "rowptr.bin": "8de802d9a1d775b5c784f01ac59d42e1b2b3dbe848c27933e0e5e71d3f8a611c"
+        }
+      }
+    },
+    {
+      "op": "layernorm",
+      "dims": [
+        2,
+        1
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 0.0,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 2,
+      "case": "layernorm-constant-one",
+      "rust_event_mean_us": 4.69120005145669,
+      "python_event_mean_us": 37.63200007379055,
+      "rust_samples_us": [
+        4.767999984323978,
+        4.991999827325344,
+        4.800000227987766,
+        4.800000227987766,
+        4.095999989658594
+      ],
+      "python_samples_us": [
+        24.800000712275505,
+        18.303999677300453,
+        13.183999806642532,
+        20.255999639630318,
+        111.61600053310394
+      ],
+      "rust_run_id": "1789017269241953125-1336",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "de542fc62a6e0c5825b67e86eab7c4b006821f8b543ec347754dca5d414b5244",
+          "b.bin": "75e253f50979177eba47b2d0805ad36038789108924514d2a761a70de057d16f",
+          "c.bin": "75e253f50979177eba47b2d0805ad36038789108924514d2a761a70de057d16f"
+        }
+      }
+    },
+    {
+      "op": "layernorm",
+      "dims": [
+        4,
+        768
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 0.0,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 3072,
+      "case": "layernorm-constant",
+      "rust_event_mean_us": 5.324799939990044,
+      "python_event_mean_us": 17.561600357294083,
+      "rust_samples_us": [
+        6.144000217318535,
+        5.119999870657921,
+        5.119999870657921,
+        5.119999870657921,
+        5.119999870657921
+      ],
+      "python_samples_us": [
+        24.57600086927414,
+        18.17600056529045,
+        17.40800030529499,
+        16.383999958634377,
+        11.264000087976456
+      ],
+      "rust_run_id": "1789017269347255780-1342",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "c7d16723bfbe86711a46601efde90c2d19976133a3fc2cb0d55a738dac029b91",
+          "b.bin": "aac86e8ebf54482ff8ea4b976a6b418a62716644cc8392bd41fd979f64c18e83",
+          "c.bin": "aac86e8ebf54482ff8ea4b976a6b418a62716644cc8392bd41fd979f64c18e83"
+        }
+      }
+    },
+    {
+      "op": "neighbor",
+      "dims": [
+        7,
+        9,
+        0
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 0.0,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 63,
+      "case": "neighbor-no-edges",
+      "rust_event_mean_us": 3.7568000610917807,
+      "python_event_mean_us": 31.76320008933544,
+      "rust_samples_us": [
+        4.095999989658594,
+        3.871999913826585,
+        3.0720001086592674,
+        4.000000189989805,
+        3.7440001033246517
+      ],
+      "python_samples_us": [
+        33.76000002026558,
+        24.57600086927414,
+        43.007999658584595,
+        28.79999950528145,
+        28.672000393271446
+      ],
+      "rust_run_id": "1789017269455005718-1348",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "57bc8d86d32e981e617de33b90436113e9dd2ed744b64ebdbcf5ce7550d44e60",
+          "b.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "indices.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rowptr.bin": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+        }
+      }
+    },
+    {
+      "op": "neighbor",
+      "dims": [
+        1,
+        5,
+        9
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 2.1420419216156006e-08,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 5,
+      "case": "neighbor-duplicates",
+      "rust_event_mean_us": 4.895999934524298,
+      "python_event_mean_us": 49.139199405908585,
+      "rust_samples_us": [
+        5.024000070989132,
+        5.119999870657921,
+        4.095999989658594,
+        5.119999870657921,
+        5.119999870657921
+      ],
+      "python_samples_us": [
+        55.296000093221664,
+        88.83199840784073,
+        37.02399879693985,
+        24.57600086927414,
+        39.96799886226654
+      ],
+      "rust_run_id": "1789017269555399790-1354",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "36bd1b12924750de24c18b2ded088a20d19389ade0a4e1a305456b720d1a6107",
+          "b.bin": "fe7cca0d1ccb4f94f26d9887eba9a126546a26dcbf5aaf980225e461637b3ea5",
+          "indices.bin": "6db65fd59fd356f6729140571b5bcd6bb3b83492a16e1bf0a3884442fc3c8a0e",
+          "rowptr.bin": "d8e0873e07dc7ad50a18300157d1aa293f9c3f70d2271ba00489647275af9c2f"
+        }
+      }
+    },
+    {
+      "op": "matmul",
+      "dims": [
+        1,
+        1,
+        1
+      ],
+      "passed": true,
+      "rtol": 0.0001,
+      "atol": 0.0001,
+      "max_abs_error": 0.0,
+      "reference": "PyTorch FP32, TF32 disabled",
+      "checked_elements": 1,
+      "case": "matmul-one",
+      "rust_event_mean_us": 3.6416000686585903,
+      "python_event_mean_us": 27.76320017874241,
+      "rust_samples_us": [
+        4.064000211656094,
+        3.0720001086592674,
+        3.0720001086592674,
+        4.095999989658594,
+        3.903999924659729
+      ],
+      "python_samples_us": [
+        25.50400048494339,
+        33.40800106525421,
+        28.704000636935234,
+        25.599999353289604,
+        25.599999353289604
+      ],
+      "rust_run_id": "1789017269655166560-1360",
+      "input_hashes": {
+        "seed": 20260910,
+        "sha256": {
+          "a.bin": "4276d09dcb6cdb4907c7f528e713d3506a864a29b55bdd781bdb7d7be828a6ff",
+          "b.bin": "b5041161912eed322f328339139708e72ea5e208b7470df98e22e6660a0cc051"
+        }
+      }
+    }
+  ]
+}
