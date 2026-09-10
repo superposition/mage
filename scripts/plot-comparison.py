@@ -31,6 +31,7 @@ OUT = ROOT / "docs/assets/figures" / EXPERIMENT
 BASELINE = {
     "mage-001": "PyTorch baseline versus first Triton and cuda-oxide Rust implementations.",
     "mage-002": "PyTorch and Triton baselines versus the rewritten cuda-oxide Rust kernels.",
+    "mage-003": "PyTorch and Triton baselines versus the cuda-oxide Rust kernels after the shared-read and two-warp revisions.",
 }
 LABELS = {"matmul": "Matrix multiplication", "gelu": "Bias + GELU", "layernorm": "LayerNorm",
           "triangle": "Triangle contraction", "neighbor": "Neighbor aggregation"}
