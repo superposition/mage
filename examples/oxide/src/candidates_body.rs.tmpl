@@ -1,6 +1,6 @@
     /// {{ROLE}} matmul: {{BM}}x{{BN}} block tile, {{TM}}x{{TN}} per thread, K step {{BK}}.
     ///
-    /// Generated from candidates_body.rs.tmpl; params {{PARAMS_JSON}}.
+    /// Generated from candidates_body.rs.tmpl; params {{MATMUL_PARAMS_JSON}}.
     #[kernel]
     pub fn matmul_{{SUFFIX}}(
         n: u32,
@@ -172,7 +172,7 @@
 
     /// {{ROLE}} layer norm: {{LN_WPR}} warp(s) per row, {{LN_ROWS}} rows per block.
     ///
-    /// Generated from candidates_body.rs.tmpl; params {{PARAMS_JSON}}.
+    /// Generated from candidates_body.rs.tmpl; params {{LAYERNORM_PARAMS_JSON}}.
     #[kernel]
     pub fn layernorm_{{SUFFIX}}(
         width: u32,
