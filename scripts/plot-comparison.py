@@ -1,0 +1,131 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["matplotlib==3.10.6"]
+# ///
+"""Render the committed evidence into responsive, downloadable scientific plots.
+
+Run: uv run --script scripts/plot-comparison.py
+The Pages build uses the committed SVGs and requires no plotting dependencies.
+"""
+import hashlib
+import json
+import math
+from pathlib import Path
+import statistics
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "docs/assets/results/mage-001"
+OUT = ROOT / "docs/assets/figures/mage-001"
+LABELS = {"matmul": "Matrix multiplication", "gelu": "Bias + GELU", "layernorm": "LayerNorm",
+          "triangle": "Triangle contraction", "neighbor": "Neighbor aggregation"}
+LANGUAGES = ["python", "triton", "rust"]
+DISPLAY = {"python": "PyTorch", "triton": "Triton", "rust": "Rust"}
+COLORS = {"python": "#93caff", "triton": "#91dbba", "rust": "#c9b2ff"}
+BG, INK, MUTED, RULE = "#101217", "#edf0f5", "#a0a9b9", "#303641"
+METRICS = {
+    "kernel": ("GPU kernel time", "Microseconds per operation · lower is better"),
+    "event": ("Time around the call", "CUDA-event microseconds · lower is better"),
+    "launches": ("Kernel launches", "Launches per operation"),
+}
+
+
+def read_data():
+    events = json.loads((SOURCE / "comparison-results.json").read_text())
+    profiles = json.loads((SOURCE / "comparison-profiles.json").read_text())
+    indexed = {(r["operation"], r["language"]): r for r in profiles["captures"]}
+    result = []
+    for row in events["results"]:
+        measurements = {}
+        for lang in LANGUAGES:
+            observations = [r["implementations"][lang] for r in row["rounds"]]
+            samples = [x for r in observations for x in r["samples_us"]]
+            assert len(samples) == events["rounds"] * events["iterations_per_round"]
+            assert all(r["correctness"]["passed"] for r in observations)
+            assert all(math.isfinite(x) and x >= 0 for x in samples)
+            round_means = [statistics.mean(r["samples_us"]) for r in observations]
+            capture = indexed[row["op"], lang]
+            durations = [k["duration_us"] for k in capture["kernel_metrics"]]
+            assert len(durations) == capture["launches"]
+            assert all(math.isfinite(x) and x >= 0 for x in durations)
+            launches = len(durations) / capture["requested_iterations"]
+            assert launches.is_integer()
+            measurements[lang] = {
+                "event": statistics.mean(samples), "event_min": min(round_means), "event_max": max(round_means),
+                "kernel": sum(durations) / capture["requested_iterations"], "launches": int(launches),
+            }
+        result.append({"op": row["op"], "label": LABELS[row["op"]], "dims": row["dims"],
+                       "measurements": measurements})
+    assert len(result) == 5
+    return {"gpu": events["gpu"], "rounds": events["rounds"],
+            "samples": events["rounds"] * events["iterations_per_round"], "rows": result,
+            "source_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                              for p in (SOURCE / "comparison-results.json", SOURCE / "comparison-profiles.json")}}
+
+
+def plot(data, metric, mobile):
+    # Small multiples have independent zero-based axes so differences remain
+    # legible for both ~8 us elementwise kernels and ~340 us matrix products.
+    width, height = (3.65, 7.35) if mobile else (7.4, 6.5)
+    fig, axes = plt.subplots(5, 1, figsize=(width, height), dpi=100)
+    fig.subplots_adjust(left=.19 if mobile else .105, right=.97, top=.85, bottom=.075, hspace=.85)
+    title, subtitle = METRICS[metric]
+    fig.text(.01, .978, title, color=INK, fontsize=13 if mobile else 15, weight="bold", va="top")
+    fig.text(.01, .943, subtitle, color=MUTED, fontsize=8.6 if mobile else 10, va="top")
+    fig.text(.01, .012, "RTX 4090 · FP32 · scales differ by row", color=MUTED,
+             fontsize=8 if mobile else 9, va="bottom")
+    for ax, row in zip(axes, data["rows"]):
+        values = [row["measurements"][l][metric] for l in LANGUAGES]
+        extent = max(row["measurements"][l]["event_max"] if metric == "event" else values[i]
+                     for i, l in enumerate(LANGUAGES))
+        ax.set_xlim(0, extent * (1.31 if mobile else 1.19))
+        ax.set_ylim(2.65, -.6)
+        for y, (lang, value) in enumerate(zip(LANGUAGES, values)):
+            ax.barh(y, value, height=.52, color=COLORS[lang], zorder=3)
+            edge = value
+            if metric == "event":
+                low, high = (row["measurements"][lang][f"event_{s}"] for s in ("min", "max"))
+                ax.errorbar(value, y, xerr=[[value - low], [high - value]], color=INK,
+                            capsize=2.5, linewidth=1, zorder=4)
+                edge = high
+            label = str(int(value)) if metric == "launches" else f"{value:.1f}"
+            ax.annotate(label, (edge, y), xytext=(5, 0), textcoords="offset points",
+                        ha="left", va="center", color=INK, fontsize=9.5 if mobile else 11)
+        ax.set_yticks(range(3), [DISPLAY[l] for l in LANGUAGES], color=MUTED, fontsize=8.5 if mobile else 10)
+        ax.set_title(row["label"], loc="left", color=INK, fontsize=10.5 if mobile else 12, pad=6, weight="medium")
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=3 if mobile else 5, integer=metric == "launches"))
+        ax.tick_params(axis="both", length=0, colors=MUTED, labelsize=8 if mobile else 9)
+        ax.grid(axis="x", color=RULE, linewidth=.6, zorder=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_facecolor(BG)
+    fig.patch.set_facecolor(BG)
+    name = f"comparison-{metric}{'-mobile' if mobile else ''}"
+    fig.savefig(OUT / f"{name}.svg", metadata={"Date": None, "Description":
+        "RTX 4090; same FP32 inputs. Each row has its own zero-based scale. "
+        "PyTorch baseline versus first Triton and cuda-oxide Rust implementations. "
+        "See comparison-results.json and comparison-profiles.json for evidence."})
+    svg = OUT / f"{name}.svg"
+    svg.write_bytes(b"\n".join(line.rstrip() for line in svg.read_bytes().splitlines()) + b"\n")
+    if not mobile:
+        fig.savefig(OUT / f"{name}.png", dpi=200)
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    # Embed glyph outlines so downloads render identically without local fonts.
+    # The page provides descriptive alt text and an accessible numeric table.
+    plt.rcParams.update({"font.family": "DejaVu Sans", "svg.fonttype": "path", "svg.hashsalt": "mage-001-comparison"})
+    OUT.mkdir(parents=True, exist_ok=True)
+    data = read_data()
+    for metric in METRICS:
+        for mobile in (False, True):
+            plot(data, metric, mobile)
+    target = ROOT / "docs/_data/profile_comparison.json"
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(json.dumps(data, indent=2))

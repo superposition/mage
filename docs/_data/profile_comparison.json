@@ -1,0 +1,168 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "rounds": 3,
+  "samples": 300,
+  "rows": [
+    {
+      "op": "matmul",
+      "label": "Matrix multiplication",
+      "dims": [
+        1024,
+        1024,
+        1024
+      ],
+      "measurements": {
+        "python": {
+          "event": 50.92650689184666,
+          "event_min": 48.372800536453724,
+          "event_max": 53.215680196881294,
+          "kernel": 55.96202,
+          "launches": 1
+        },
+        "triton": {
+          "event": 88.81567989786465,
+          "event_min": 82.42304012179375,
+          "event_max": 95.8383996784687,
+          "kernel": 83.78127,
+          "launches": 1
+        },
+        "rust": {
+          "event": 326.7194660504659,
+          "event_min": 317.0851182937622,
+          "event_max": 345.21856129169464,
+          "kernel": 343.99352,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "gelu",
+      "label": "Bias + GELU",
+      "dims": [
+        4096,
+        768
+      ],
+      "measurements": {
+        "python": {
+          "event": 27.698773629963398,
+          "event_min": 22.00416024774313,
+          "event_max": 33.231040332466364,
+          "kernel": 15.91269,
+          "launches": 2
+        },
+        "triton": {
+          "event": 24.29290649170677,
+          "event_min": 20.076479902490973,
+          "event_max": 27.115519642829895,
+          "kernel": 7.94013,
+          "launches": 1
+        },
+        "rust": {
+          "event": 12.952426771322886,
+          "event_min": 11.96800010278821,
+          "event_max": 14.83712007291615,
+          "kernel": 11.2148,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "layernorm",
+      "label": "LayerNorm",
+      "dims": [
+        4096,
+        768
+      ],
+      "measurements": {
+        "python": {
+          "event": 17.767893426741164,
+          "event_min": 16.39136005192995,
+          "event_max": 19.91168014705181,
+          "kernel": 11.43789,
+          "launches": 1
+        },
+        "triton": {
+          "event": 22.61407991560797,
+          "event_min": 19.894079864025116,
+          "event_max": 26.57759997062385,
+          "kernel": 8.19163,
+          "launches": 1
+        },
+        "rust": {
+          "event": 19.470719633003075,
+          "event_min": 19.41023962572217,
+          "event_max": 19.5705596357584,
+          "kernel": 18.64341,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "triangle",
+      "label": "Triangle contraction",
+      "dims": [
+        128,
+        32
+      ],
+      "measurements": {
+        "python": {
+          "event": 55.55850690851609,
+          "event_min": 51.8816003203392,
+          "event_max": 57.56736021488905,
+          "kernel": 28.45555,
+          "launches": 3
+        },
+        "triton": {
+          "event": 91.91157321135204,
+          "event_min": 89.30335938930511,
+          "event_max": 94.48064029216766,
+          "kernel": 93.87383,
+          "launches": 1
+        },
+        "rust": {
+          "event": 78.54634766777356,
+          "event_min": 76.30304239690304,
+          "event_max": 83.00671845674515,
+          "kernel": 81.16194999999999,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "neighbor",
+      "label": "Neighbor aggregation",
+      "dims": [
+        4096,
+        64,
+        65536
+      ],
+      "measurements": {
+        "python": {
+          "event": 89.6610128134489,
+          "event_min": 84.9404788762331,
+          "event_max": 94.36383992433548,
+          "kernel": 78.33851,
+          "launches": 4
+        },
+        "triton": {
+          "event": 21.79583984427154,
+          "event_min": 20.423359852284193,
+          "event_max": 23.29023982398212,
+          "kernel": 7.91861,
+          "launches": 1
+        },
+        "rust": {
+          "event": 13.183893471335372,
+          "event_min": 12.909120125696063,
+          "event_max": 13.729600189253688,
+          "kernel": 10.277639999999998,
+          "launches": 1
+        }
+      }
+    }
+  ],
+  "source_sha256": {
+    "comparison-results.json": "e43b4605dd5bedbe1dc063274ead14c0f7769cd23078223d271a07a1123d1e74",
+    "comparison-profiles.json": "3ab8f87c3fd09223443aeef395d6d7ac7d43a7bb2a24970ab0e351343206ddb3"
+  }
+}

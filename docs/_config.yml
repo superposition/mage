@@ -17,4 +17,4 @@ navigation:
   - {title: Field notes, url: /experiments/}
   - {title: Code & evidence ↗, url: "https://github.com/superposition/mage", external: true}
   - {title: Superposition ↗, url: "https://superposition.github.io/", external: true}
-exclude: [Gemfile, Gemfile.lock, README.md, vendor, templates, guide.md, profiling.md, kernel-contracts.md, experiments/mage-001-validation.md, _data, assets/results]
+exclude: [Gemfile, Gemfile.lock, README.md, vendor, templates, guide.md, profiling.md, kernel-contracts.md, experiments/mage-001-validation.md, experiments/mage-001-comparison.md, _data, assets/results]

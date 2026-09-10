@@ -4,10 +4,21 @@ permalink: /experiments/mage-001/
 eyebrow: "Field note 001 / Mathematics on a GPU"
 description: An equation tells us what to compute. It leaves open how much information must move to compute it.
 math: true
+profiles: true
 ---
 Two programs can evaluate the same equation and behave very differently on the same machine. That gap is interesting: it connects the mathematical description of a problem to the physical cost of solving it.
 
 The first Mage investigation starts with five small operations. The question behind them is broader than kernel performance: **what can the structure of a calculation tell us about how to organize the work?**
+
+## Does the rewrite improve the work? {#profiles}
+
+Start with a PyTorch expression, then give the same calculation to a custom Triton kernel and a Rust kernel built with cuda-oxide. The graphs show where the first rewrites improve the result and where they make it worse. Switch views to see why the choice of measurement matters.
+
+{% include profile-comparison.html %}
+
+**The surprising part is that the apparent winner can change with the measurement.** For bias + GELU, Rust has the shorter event span around the call: 13.0 µs against Triton's 24.3 µs. In the separate profile, Triton's kernel itself takes 7.9 µs against Rust's 11.2 µs. The launch path is part of the system we are measuring.
+
+These are separate runs with different launch rhythms, so subtracting one number from another would not isolate Python overhead. They give us a better question to test: does the advantage survive when the kernel runs inside the actual application?
 
 ## Reuse is hidden in the equation
 
@@ -68,6 +79,16 @@ All five Rust implementations matched the shared Python references in the tested
 That is an observation about these implementations, not a ranking of languages. The scalar Rust matrix multiply was substantially slower than the optimized Python library call. Reuse, instruction choice, launch overhead, and the quality of the implementation all matter.
 
 The reason to keep measuring is to connect an idea to an explanation. A faster implementation is most useful to this investigation when we can say what changed and why it should help.
+
+## What would I use in production?
+
+**Keep the library where it already wins.** PyTorch's library-backed matrix multiplication and triangle expression beat both first custom versions in the GPU profiles. Replacing a mature implementation takes more than translating its equation into another language.
+
+**For a PyTorch workload, try compilation and targeted Triton fusion first.** That is my starting recommendation for this project: Triton has the shortest measured GPU time for GELU, LayerNorm, and neighbor aggregation here, and PyTorch supports [integrating Triton with its compiler and custom operators](https://docs.pytorch.org/tutorials/recipes/torch_compile_user_defined_triton_kernel_tutorial.html). These examples use fixed tiles; tuning and compiled execution still need their own comparison. Training also needs correct backward operations, which this experiment does not test.
+
+**For a Rust application, investigate the value of owning the whole launch path.** Native integration, explicit memory ownership, and control over execution can justify the work. A shorter event span in this harness is a reason to investigate, not enough to ship a replacement. cuda-oxide describes itself as an [experimental alpha compiler](https://github.com/NVlabs/cuda-oxide#project-status), so a production candidate needs a pinned toolchain, a fallback, and validation on the deployment hardware.
+
+The decision belongs to the whole workload. If a kernel accounts for 20% of a request, making it twice as fast improves the full request by only about 11%, assuming the rest is unchanged. The next useful experiment should therefore measure an actual model or service: representative shapes and precision, batching, transfers, throughput, and tail latency. That is where a faster kernel earns its place.
 
 [Measurements and reproduction in GitHub](https://github.com/superposition/mage/blob/master/docs/experiments/mage-001-validation.md) · [Why this investigation exists](https://superposition.github.io/journal/why-this-notebook/)
 
