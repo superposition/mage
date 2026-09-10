@@ -84,8 +84,10 @@ mod kernels {
     ) {
         use cuda_device::vector::{self, F32x4};
 
-        static mut AS: SharedArray<f32, 2048> = SharedArray::UNINIT; // 64 rows x 32 columns
-        static mut BS: SharedArray<f32, 2048> = SharedArray::UNINIT; // 32 rows x 64 columns
+        // A is stored transposed (k-major, row stride 68) so each thread reads the
+        // four rows it owns with one 128-bit load instead of four scalar loads.
+        static mut AT: SharedArray<f32, 4352, 16> = SharedArray::UNINIT; // 64 k-rows x 68 stride
+        static mut BS: SharedArray<f32, 4096, 16> = SharedArray::UNINIT; // 64 rows x 64 columns
         let tx = thread::threadIdx_x() as usize; // 0..16, column group
         let ty = thread::threadIdx_y() as usize; // 0..16, row group
         let tid = ty * 16 + tx;
@@ -96,53 +98,52 @@ mod kernels {
         let mut acc = [[0.0f32; 4]; 4];
         let mut step = 0usize;
         while step < kk {
-            // Two quads per thread: A is loaded row-major, B column-block-major.
+            // Four quad passes per tile: A (64x64, stored transposed) and B (64x64).
+            let b_quads = unsafe { core::ptr::addr_of_mut!(BS) }.cast::<F32x4>();
             let mut pass = 0usize;
-            while pass < 2 {
+            while pass < 4 {
                 let q = tid + pass * 256;
-                let a_start = (row0 + q / 8) * kk + step + (q % 8) * 4;
+                let row = q / 16;
+                let col = (q % 16) * 4;
+                let a_start = (row0 + row) * kk + step + col;
                 if let Some(quad) = vector::as_vectors::<F32x4>(&a[a_start..a_start + 4]) {
                     let v = quad[0].as_slice();
-                    let slot = (q / 8) * 32 + (q % 8) * 4;
                     unsafe {
-                        AS[slot] = v[0];
-                        AS[slot + 1] = v[1];
-                        AS[slot + 2] = v[2];
-                        AS[slot + 3] = v[3];
+                        AT[col * 68 + row] = v[0];
+                        AT[(col + 1) * 68 + row] = v[1];
+                        AT[(col + 2) * 68 + row] = v[2];
+                        AT[(col + 3) * 68 + row] = v[3];
                     }
                 }
-                let b_start = (step + q / 16) * nn + col0 + (q % 16) * 4;
+                let b_start = (step + row) * nn + col0 + col;
                 if let Some(quad) = vector::as_vectors::<F32x4>(&b[b_start..b_start + 4]) {
-                    let v = quad[0].as_slice();
-                    let slot = (q / 16) * 64 + (q % 16) * 4;
                     unsafe {
-                        BS[slot] = v[0];
-                        BS[slot + 1] = v[1];
-                        BS[slot + 2] = v[2];
-                        BS[slot + 3] = v[3];
+                        *b_quads.add(row * 16 + col / 4) = quad[0];
                     }
                 }
                 pass += 1;
             }
             thread::sync_threads();
             let mut i = 0usize;
-            while i < 32 {
+            while i < 64 {
                 let mut av = [0.0f32; 4];
-                let mut r = 0usize;
-                while r < 4 {
-                    unsafe {
-                        av[r] = AS[(ty * 4 + r) * 32 + i];
-                    }
-                    r += 1;
-                }
+                // One 128-bit shared read for the four rows this thread owns.
+                let a_base = core::ptr::addr_of!(AT).cast::<F32x4>();
+                let a_lanes = unsafe { (*a_base.add(i * 17 + ty)).0 };
+                av[0] = a_lanes[0];
+                av[1] = a_lanes[1];
+                av[2] = a_lanes[2];
+                av[3] = a_lanes[3];
                 let mut bv = [0.0f32; 4];
+                // One 128-bit shared read for the four columns this thread owns.
+                let base = core::ptr::addr_of!(BS).cast::<F32x4>();
+                let lanes = unsafe { (*base.add(i * 16 + tx)).0 };
+                bv[0] = lanes[0];
+                bv[1] = lanes[1];
+                bv[2] = lanes[2];
+                bv[3] = lanes[3];
                 let mut c = 0usize;
-                while c < 4 {
-                    unsafe {
-                        bv[c] = BS[i * 64 + tx * 4 + c];
-                    }
-                    c += 1;
-                }
+                let mut r = 0usize;
                 r = 0;
                 while r < 4 {
                     c = 0;
@@ -155,7 +156,7 @@ mod kernels {
                 i += 1;
             }
             thread::sync_threads();
-            step += 32;
+            step += 64;
         }
         // SAFETY: the host validated `m * n` output elements and launched exactly
         // one 64x64 tile per block, so every written cell is inside the buffer and
@@ -560,7 +561,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             match manifest.op.as_str() {
                 "matmul" => {
                     let (m, n, k) = (dims[0], dims[1], dims[2]);
-                    if m % 64 == 0 && n % 64 == 0 && k % 32 == 0 {
+                    if m % 64 == 0 && n % 64 == 0 && k % 64 == 0 {
                         // Square 64x64 tiles, no edge masking needed.
                         module.tiled_matmul_registers(
                             &stream,
