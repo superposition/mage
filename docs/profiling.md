@@ -16,6 +16,33 @@ mage profile --backend ncu --output-dir artifacts/python-counters script.py
 
 Use the active virtual environment. Nsight invokes that environment's Python interpreter. Triton profiling remains in process and keeps the existing context-manager API.
 
+## Python function workflow
+
+A function can be profiled without a wrapper script:
+
+```bash
+mage profile -m package.module:function
+mage profile -m package.module:function --call-args '[1, 2]' --call-kwargs '{"scale": 4}'
+mage profile -m package.module:function --warmup 5 --iterations 20
+mage profile --backend nsys --capture-range cuda \
+  --output-dir artifacts/function-trace -m package.module:function
+```
+
+The target is imported as `module:function` from the directory where `mage` is
+invoked; dotted attributes such as `module:Class.method` are accepted. Positional
+and keyword arguments are JSON literals, so they carry scalars, strings, lists,
+and objects, not tensors. A function that needs tensors either builds them from
+its JSON arguments or takes no arguments and constructs its own inputs.
+
+`--warmup` calls run before `--iterations` measured calls. With the Triton
+backend the warmup launches are discarded from the reported metrics, so compile
+and first-touch costs stay out of the table; that backend records `@triton.jit`
+launches only, and it reports an error instead of an empty session when a target
+launches none. With `--capture-range cuda`, the generated driver calls the CUDA
+profiler start and stop APIs around the measured calls, so a native capture
+contains only the measured region. The driver is a temporary file and is deleted
+after the run.
+
 ## Native executable workflow
 
 Build the Rust binary and generate input directories using the [setup guide](https://github.com/superposition/mage/blob/master/docs/guide.md), then:

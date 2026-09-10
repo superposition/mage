@@ -1,8 +1,9 @@
 """CLI entry point for mage."""
 
 import argparse
-import sys
 import shlex
+import shutil
+import sys
 from pathlib import Path
 
 import torch
@@ -157,23 +158,34 @@ def profile(
     capture_range: str = "all",
     output_dir: str | None = None,
     launch_count: int | None = None,
+    module: str | None = None,
+    call_args: str = "[]",
+    call_kwargs: str = "{}",
+    warmup: int = 3,
+    iterations: int = 1,
 ) -> int:
-    """Profile a Python script using nsys or ncu.
+    """Profile a Python script or a function with the selected backend.
 
     Args:
         script: Path to the Python script to profile
         args: Additional arguments to pass to the script
-        backend: Profiler backend ('nsys' or 'ncu')
+        backend: Profiler backend ('triton', 'nsys' or 'ncu')
         columns: List of columns to display
         group_by: Field to group metrics by
         no_persist: Don't save to database
         db_path: Custom database path
         analyze: Run memory analysis after profiling
+        module: Function target 'module:function' instead of a script
+        call_args: JSON array of positional arguments for the module target
+        call_kwargs: JSON object of keyword arguments for the module target
+        warmup: Untimed calls before the measured region of a module target
+        iterations: Timed calls of a module target
 
     Returns:
         Exit code (0 for success)
     """
     from mage.profiler import get_backend, ProfilerTUI, ProfileDB, print_memory_report
+    from mage.profiler.targets import write_driver
 
     # Get the profiler backend
     try:
@@ -193,52 +205,75 @@ def profile(
         print(f"Make sure NVIDIA {backend} is installed and in your PATH")
         return 1
 
-    # Set up TUI
-    tui = ProfilerTUI(columns=columns, group_by=group_by)
-    argv = executable if executable is not None else [sys.executable, str(Path(script).resolve()), *(args or [])]
-    tui.start_session(shlex.join(argv), backend=backend)
-
-    print(f"Profiling {shlex.join(argv)} with {backend}...")
-    print("This may take a moment...\n")
-
-    # Run profiler
-    try:
-        iterator = (profiler.run_command(argv, callback=tui.add_metric) if executable is not None
-                    else profiler.run(script, args, callback=tui.add_metric))
-        for metric in iterator:
-            pass  # Metrics added via callback
-    except KeyboardInterrupt:
-        print("\nProfiling interrupted")
-        return 130
-    except Exception as e:
-        print(f"Error during profiling: {e}")
-        return 1
-    finally:
-        tui.finish()
-        if hasattr(profiler, "cleanup"):
-            profiler.cleanup()
-
-    # Display results
-    tui.print_final()
-    tui.print_summary()
-    if output_dir:
-        print(f"Reports: {profiler.report_dir}")
-
-    # Memory analysis
-    if analyze and tui.aggregator.metrics:
-        print("\n")
-        print_memory_report(tui.aggregator.metrics)
-
-    # Save to database
-    if not no_persist and tui.session:
+    # A function target becomes a script, so every backend takes the same path.
+    driver = None
+    if module:
         try:
-            db = ProfileDB(db_path) if db_path else ProfileDB()
-            session_id = db.save_session(tui.session)
-            print(f"\nSession saved to database (id={session_id})")
-        except Exception as e:
-            print(f"Warning: Could not save to database: {e}")
+            driver = write_driver(module, cwd=Path.cwd(), call_args=call_args, call_kwargs=call_kwargs,
+                                  warmup=warmup, iterations=iterations, capture=capture_range == "cuda",
+                                  discard_warmup=backend == "triton")
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        script = str(driver)
 
-    return 0
+    try:
+        # Set up TUI
+        tui = ProfilerTUI(columns=columns, group_by=group_by)
+        argv = executable if executable is not None else [sys.executable, str(Path(script).resolve()), *(args or [])]
+        tui.start_session(shlex.join(argv), backend=backend)
+
+        print(f"Profiling {shlex.join(argv)} with {backend}...")
+        print("This may take a moment...\n")
+
+        # Run profiler
+        try:
+            iterator = (profiler.run_command(argv, callback=tui.add_metric) if executable is not None
+                        else profiler.run(script, args, callback=tui.add_metric))
+            for metric in iterator:
+                pass  # Metrics added via callback
+        except KeyboardInterrupt:
+            print("\nProfiling interrupted")
+            return 130
+        except Exception as e:
+            print(f"Error during profiling: {e}")
+            return 1
+        finally:
+            tui.finish()
+            if hasattr(profiler, "cleanup"):
+                profiler.cleanup()
+
+        # Display results
+        tui.print_final()
+        tui.print_summary()
+        if output_dir:
+            print(f"Reports: {profiler.report_dir}")
+
+        if module and not tui.aggregator.metrics:
+            print(f"\nError: no kernels recorded for {module}.")
+            if backend == "triton":
+                print("The triton backend records @triton.jit launches only; use --backend nsys "
+                      "for code that launches kernels another way.")
+            return 1
+
+        # Memory analysis
+        if analyze and tui.aggregator.metrics:
+            print("\n")
+            print_memory_report(tui.aggregator.metrics)
+
+        # Save to database
+        if not no_persist and tui.session:
+            try:
+                db = ProfileDB(db_path) if db_path else ProfileDB()
+                session_id = db.save_session(tui.session)
+                print(f"\nSession saved to database (id={session_id})")
+            except Exception as e:
+                print(f"Warning: Could not save to database: {e}")
+
+        return 0
+    finally:
+        if driver is not None:
+            shutil.rmtree(driver.parent, ignore_errors=True)
 
 
 def main():
@@ -269,14 +304,40 @@ def main():
         epilog="""
 Examples:
   mage profile script.py
+  mage profile -m package.module:function
   mage profile --backend ncu script.py
   mage profile --columns kernel,duration,occupancy script.py
   mage profile --group-by kernel_name script.py
         """,
     )
-    profile_parser.add_argument("script", help="Python script to profile")
+    profile_parser.add_argument("script", nargs="?", help="Python script to profile")
     profile_parser.add_argument(
         "script_args", nargs="*", help="Arguments to pass to the script"
+    )
+    profile_parser.add_argument(
+        "--module", "-m",
+        metavar="MODULE:FUNCTION",
+        help="Profile a function instead of a script",
+    )
+    profile_parser.add_argument(
+        "--call-args",
+        metavar="JSON",
+        help="JSON array of positional arguments for --module (default: [])",
+    )
+    profile_parser.add_argument(
+        "--call-kwargs",
+        metavar="JSON",
+        help="JSON object of keyword arguments for --module (default: {})",
+    )
+    profile_parser.add_argument(
+        "--warmup",
+        type=int,
+        help="Untimed calls before the measured region of --module (default: 3)",
+    )
+    profile_parser.add_argument(
+        "--iterations",
+        type=int,
+        help="Timed calls of --module (default: 1)",
     )
     profile_parser.add_argument(
         "--backend", "-b",
@@ -352,9 +413,22 @@ Examples:
             executable = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             if not executable:
                 parser.error("profile-exec requires -- executable [arguments...]")
+        elif args.module is None and args.script is None:
+            parser.error("profile requires a script path or --module module:function")
+        elif args.module is not None and args.script is not None:
+            parser.error("profile takes a script path or --module, not both")
+        elif (args.script is not None
+              and any(value is not None for value in (args.call_args, args.call_kwargs,
+                                                      args.warmup, args.iterations))):
+            parser.error("--call-args, --call-kwargs, --warmup and --iterations require --module")
         return profile(
-            script=getattr(args, "script", ""),
+            script=getattr(args, "script", "") or "",
             args=getattr(args, "script_args", None),
+            module=getattr(args, "module", None),
+            call_args=getattr(args, "call_args", None) or "[]",
+            call_kwargs=getattr(args, "call_kwargs", None) or "{}",
+            warmup=3 if getattr(args, "warmup", None) is None else args.warmup,
+            iterations=1 if getattr(args, "iterations", None) is None else args.iterations,
             backend=args.backend,
             columns=columns,
             group_by=args.group_by,

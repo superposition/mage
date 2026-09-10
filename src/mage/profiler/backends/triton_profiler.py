@@ -72,6 +72,14 @@ class TritonProfiler:
         TritonProfiler._active = False
         torch.cuda.synchronize()
 
+    def discard(self):
+        """Drop recorded calls while profiling continues.
+
+        Generated drivers use this to exclude warmup calls, which carry compilation
+        and first-touch costs, from the reported metrics.
+        """
+        self.calls.clear()
+
     def _patch_triton(self):
         """Patch triton JIT function to record timings."""
         # Store original run method
@@ -233,6 +241,7 @@ class TritonBackend(ProfilerBackend):
         import subprocess
         import sys
         import runpy
+        from pathlib import Path
 
         profiler = TritonProfiler.get_instance()
 
@@ -240,6 +249,9 @@ class TritonBackend(ProfilerBackend):
         # This is done by importing and running with profiler context
         profiler.start()
 
+        # Match `python script.py`, which puts the script's own directory on sys.path.
+        script_dir = str(Path(script).resolve().parent)
+        sys.path.insert(0, script_dir)
         try:
             # Run the script
             old_argv = sys.argv
@@ -250,6 +262,8 @@ class TritonBackend(ProfilerBackend):
                 sys.argv = old_argv
 
         finally:
+            if sys.path and sys.path[0] == script_dir:
+                del sys.path[0]
             profiler.stop()
 
         # Get metrics and yield them

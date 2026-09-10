@@ -2,9 +2,9 @@ name: Profiler regression tests
 on:
   push:
     branches: [master]
-    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', '.github/workflows/profiler-tests.yml']
+    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', 'tests/test_profile_target.py', '.github/workflows/profiler-tests.yml']
   pull_request:
-    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', '.github/workflows/profiler-tests.yml']
+    paths: ['src/mage/profiler/**', 'src/mage/cli.py', 'tests/test_native_profiler.py', 'tests/test_profile_target.py', '.github/workflows/profiler-tests.yml']
 permissions:
   contents: read
 jobs:
@@ -18,4 +18,4 @@ jobs:
           cache: pip
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.9.1
       - run: pip install -e . pytest
-      - run: pytest tests/test_native_profiler.py -q
+      - run: pytest tests/test_native_profiler.py tests/test_profile_target.py -q
