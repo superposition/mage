@@ -4,7 +4,25 @@
 
 [Mathematical field notes](https://superposition.github.io/mage/) ·
 [Superposition journal](https://superposition.github.io/) ·
-[First Python/Rust investigation](https://superposition.github.io/mage/experiments/mage-001/)
+[PyTorch / Triton / Rust profile graphs](https://superposition.github.io/mage/experiments/mage-001/#profiles)
+
+## The research notebook
+
+Mage is also an open investigation into the mathematics and physical work behind
+GPU computation. The [Superposition blog](https://superposition.github.io/)
+follows the motivation, discoveries, and changes of mind; Mage holds the kernels,
+profiling tools, and reproducible evidence.
+
+- [Why this notebook: thinking above the code](https://superposition.github.io/journal/why-this-notebook/) — where the investigation begins.
+- [A faster call can hide a slower kernel](https://superposition.github.io/journal/faster-calls-slower-kernels/) — what the first three-way profiles change about the question.
+- [Computation is also movement](https://superposition.github.io/mage/experiments/mage-001/) — the mathematical ideas, interactive graphs, and production tradeoffs.
+- [Continue the kernel exploration](docs/research/kernel-exploration.md) — the next experiments, implementation priorities, and criteria for an informative result.
+
+The current comparisons cover five forward FP32 operations on an RTX 4090.
+They include improvements and regressions; they are not a general ranking of
+Python, Triton, or Rust. Start with the [measurement record](docs/experiments/mage-001-comparison.md)
+before interpreting the graphs. Questions and corrections are welcome via
+[Telegram @SuprPosition](https://t.me/SuprPosition).
 
 ### Rust CUDA experiments
 
@@ -22,7 +40,7 @@ See the [WSL2 setup and reproduction guide](https://github.com/superposition/mag
 ## Features
 
 - High-performance Triton kernels: `add`, `fma`, `relu`, `softmax`, `matmul`
-- Full autograd support for training
+- Autograd wrappers for Mage's training operators; the Rust/Triton research examples are forward-only
 - Built-in Triton event profiler with TUI (no special permissions needed)
 - Nsight Systems/Compute for Python scripts and native executables; Compute requires counter access
 - Memory analysis with roofline model diagnostics
@@ -39,7 +57,7 @@ pip install -e .
 import torch
 import mage
 
-# Use like PyTorch, but with Triton speed
+# Call Mage's Triton implementation through its Python API
 x = torch.randn(1024, 1024, device="cuda", dtype=torch.float16)
 y = torch.randn(1024, 1024, device="cuda", dtype=torch.float16)
 
