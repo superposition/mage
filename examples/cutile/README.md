@@ -20,8 +20,8 @@ source scripts/cutile-env.sh          # CUDA 13.3 toolkit + tileiras
 cd examples/cutile && cargo build --release
 cd ../..
 .venv/bin/python examples/oxide/comparison.py --implementation cutile \
-  --ops matmul gelu layernorm triangle --experiment mage-004 \
-  --output artifacts/mage-004-comparison --rounds 3 --iterations 100 --warmup 25
+  --experiment mage-004 --output artifacts/mage-004-comparison \
+  --rounds 3 --iterations 100 --warmup 25
 ```
 
 `--capture` brackets the measured region with the CUDA profiler API so an
@@ -37,13 +37,22 @@ overrides the manifest count. Each run retains its output and event samples in
 | bias + GELU | `bias_gelu` | `[8, 128]` tiles, bias taken from the tile's column block |
 | layernorm | `layer_norm` | one row per program; the row is padded to the next power of two because tile dimensions must be, and the kernel divides by the true width |
 | triangle contraction | `triangle` | channel axis as the third grid axis, one `mma` per program |
-| neighbor aggregation | — | not ported; a CSR gather needs the raw-pointer path (`load_ptr_tko`) |
+| neighbor aggregation | `neighbor` | one row per program, CSR read through raw pointers (`load_ptr_tko`): the edge walk bound is data, not a partition shape |
 
-Two constraints of the Tile IR assembler shaped these kernels and are worth
-knowing before writing another: **tile dimensions must be powers of two** (a
-257- or 768-wide row tile is rejected with `failed to compile Tile IR program`
-and no further detail), and **a partition load indexed by a loop variable does
-not vary** — take a varying index from the grid axes instead.
+Five constraints of the toolchain shaped these kernels. Each is silent until the
+assembler or the compiler runs, and each is recorded next to the code that hit
+it:
+
+- **Tile dimensions must be powers of two.** A 257- or 768-wide row tile is
+  rejected with `failed to compile Tile IR program` and no further detail.
+- **A partition load indexed by a loop variable does not vary.** Take a varying
+  index from the grid axes instead: the triangle kernel did not until it did.
+- **A `Tile<..>` in an expression position is not rewritten** by the entry
+  macro, so `None::<Tile<bool, { [] }>>` will not resolve.
+- **`convert_scalar` has no `u32` → `i32`**; the CSR arrays are uploaded as
+  `i32`.
+- **Scalar comparison is not a supported binary operator**; count the edges and
+  loop over the count.
 
 `CUTILE_MATMUL_TILE=BM,BN,BK` selects a different matmul specialization; that is
 how the mage-004 tile sweep was taken. Tile shapes are part of the JIT

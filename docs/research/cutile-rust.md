@@ -1,12 +1,13 @@
 # Adding a cuTile Rust track
 
-Status: **four of the five operations are ported and measured** (2026-09-10).
-The toolkit gate passed, `examples/cutile` builds and runs, and
-[mage-004](../experiments/mage-004.md) holds the values: the tile kernels are
-ahead of cuda-oxide on GPU time for bias + GELU, level on layer norm, 2.2× behind
-on matrix multiply and 1.5× behind on triangle contraction, with the retained
-matmul tile chosen by a twelve-configuration sweep. Neighbor aggregation, the
-launch path, and autotuning remain open; see [Open work](#open-work).
+Status: **all five operations are ported and measured** (2026-09-10), with
+neighbor's kernel time still to capture. The toolkit gate passed,
+`examples/cutile` builds and runs, and [mage-004](../experiments/mage-004.md)
+holds the values: the tile kernels are ahead of cuda-oxide on GPU time for
+bias + GELU, level on layer norm, 2.2× behind on matrix multiply and 1.5× behind
+on triangle contraction, with the retained matmul tile chosen by a
+twelve-configuration sweep. The launch path, autotuning and the lower-precision
+contracts remain open; see [Open work](#open-work).
 
 [cuTile Rust](https://github.com/NVlabs/cutile-rs) is NVlabs' second Rust-to-CUDA
 stack, alongside [cuda-oxide](https://github.com/NVlabs/cuda-oxide). Where
@@ -222,9 +223,9 @@ profiling commands next to the oxide ones.
 
 | Item | State | Next test |
 | --- | --- | --- |
-| Neighbor aggregation (CSR gather) | Not ported: the tile model has no scalar load from a device array, and the loop bound is per-row data | `load_ptr_tko` raw-pointer kernel, measured against the safe path; the cost of the escape hatch is part of the result |
 | The launch path | Not measured: the harness serializes submission per iteration, which prices the lazy runtime's host work rather than its queueing | Single launch, a batch divided by repetitions, and CUDA graph replay, with warmup excluded |
-| Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region |
+| Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region; the triangle and neighbor tiles were never swept at all |
+| Neighbor kernel time | Event span retained, capture missing: the device was busy with another agent's profiling run | One Nsight Systems capture of 100 launches, device idle |
 | Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
 
 ## Where the results live

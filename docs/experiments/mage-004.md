@@ -1,7 +1,7 @@
 # mage-004: cuTile Rust tile kernels
 
-Status: **four of the five operations measured** (2026-09-10). Neighbor
-aggregation is not ported; see [Open items](#open-items).
+Status: **all five operations ported and measured** (2026-09-10), except where
+noted for neighbor's kernel time.
 
 This round adds a third Rust-to-CUDA path to the comparison. The first two are
 in [mage-001](mage-001-comparison.md) (first cuda-oxide kernels) and
@@ -35,10 +35,11 @@ every measured launch, so compilation is outside the timed region.
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 51.86 | 89.11 | 220.14 | 82.6 |
-| Bias + GELU 4096×768 | 33.15 | 21.21 | 30.13 | 13.3 |
-| LayerNorm 4096×768 | 19.89 | 24.90 | 33.49 | 12.9 |
-| Triangle contraction 128×32 | 57.84 | 99.96 | 162.91 | 83.5 |
+| Matrix multiplication 1024³ | 58.50 | 93.88 | 216.64 | 82.6 |
+| Bias + GELU 4096×768 | 35.37 | 26.95 | 30.22 | 13.3 |
+| LayerNorm 4096×768 | 23.46 | 26.69 | 34.21 | 12.9 |
+| Triangle contraction 128×32 | 61.42 | 102.09 | 153.71 | 83.5 |
+| Neighbor aggregation 4096×64×65536 | 94.45 | 26.54 | 63.96 | 12.9 |
 
 ## GPU kernel time (µs per launch, single capture, 100 launches)
 
@@ -48,12 +49,13 @@ every measured launch, so compilation is outside the timed region.
 | Bias + GELU 4096×768 | 15.8 | 7.6 | **8.09** | 11.0 |
 | LayerNorm 4096×768 | 11.2 | 8.0 | 10.66 | 10.05 |
 | Triangle contraction 128×32 | 28.5 | 81.6 | 120.58 | 80.1 |
+| Neighbor aggregation | 67.3 | 8.0 | not captured | 10.3 |
 
 The two views disagree, and the disagreement is the result. On GPU time the tile
 kernels are **ahead of cuda-oxide on bias + GELU** (8.09 against 11.0 µs) and
 level with it on layer norm (10.66 against 10.05 µs), while trailing on the two
 matmul-shaped operations (2.2× and 1.5×). On event spans the tile kernels trail
-everywhere, including where their kernels are faster: bias + GELU spans 30.13 µs
+everywhere, including where their kernels are faster: bias + GELU spans 30.22 µs
 around a kernel that takes 8.09 µs.
 
 That gap is the launch path, not the kernel. Each timed iteration here records
@@ -77,6 +79,7 @@ observed error:
 | Bias + GELU | 2.38e-07 | 1e-4 |
 | LayerNorm | 4.77e-07 | 1e-4 |
 | Triangle contraction | 7.15e-07 | 1e-4 |
+| Neighbor aggregation | 3.58e-07 | 1e-4 |
 
 The matrix multiply is the interesting one: `mma` on `f32` is not the tensor-core
 TF32 path that the same intrinsic selects in a lower-precision kernel. Its error
@@ -108,8 +111,8 @@ when hardware counters are unavailable.
 
 ## What shaped the kernels
 
-Two compiler constraints are worth recording, because both are silent until the
-assembler runs:
+Five compiler constraints are worth recording, because each is silent until the
+Tile IR assembler or the compiler runs:
 
 - **Tile dimensions are powers of two.** A row tile of 257 or 768 columns is
   rejected at Tile IR assembly with `failed to compile Tile IR program` and no
@@ -122,6 +125,22 @@ assembler runs:
   `a.partition([BI, N, 1]).load([pid.0, 0, channel])`; every channel received the
   first channel's value. Taking the channel from the third grid axis — the
   batched-GEMM idiom of the upstream `batch_matmul` example — fixes it.
+- **A `Tile<..>` in an expression position is not rewritten** by the entry
+  macro, so `None::<Tile<bool, { [] }>>` fails to resolve as a type while the
+  same type in a `let` annotation is fine. The pointer loads carry their tuple
+  type as an annotation and leave the mask and padding arguments unannotated.
+- **`convert_scalar` has no `u32` → `i32`.** The CSR arrays are uploaded as
+  `i32` and read through `*const i32`, which the host's bounds check (row
+  pointers non-decreasing and ending at the edge count, every index naming a
+  row) makes safe.
+- **Scalar comparison is not a supported binary operator.** The edge walk is a
+  counted range loop over `end - start` rather than `while edge < end`.
+
+The irregular operation needed the raw-pointer path: the neighbor kernel reads
+its row pointers, edge indices and weights with `load_ptr_tko` over device
+pointers, and gathers the source row through a partition view indexed by the
+loaded value. That is the distance between the safe tile model and the escape
+hatch the plan anticipated, and it is why it was ported last.
 
 ## What the numbers do not establish
 
@@ -129,6 +148,12 @@ assembler runs:
   pressure and memory traffic are inferred from ratios, not read.
 - LayerNorm's kernel time includes the 768 → 1024 row padding; a kernel with a
   native 768-wide tile would do less work.
+- Neighbor's kernel time has no capture yet: the device was busy with another
+  agent's profiling run when this round closed. Its event span is retained.
+- Event spans are sensitive to device contention. A repeat of this comparison
+  that shared the GPU with another Nsight capture measured 3–20× larger spans
+  for the same binary; the retained run is the one taken with the device idle,
+  and it agrees with the earlier four-operation round to a few percent.
 - One capture per operation; kernel time carries no interval. Event spans come
   from three rounds with rotating order, and the round means above are quoted
   with their spread in `artifacts/mage-004-comparison/results.json`.
@@ -139,15 +164,14 @@ assembler runs:
 
 ## Open items
 
-1. **Neighbor aggregation** is not ported. The operation is a CSR gather with a
-   data-dependent loop bound per row, and the tile model has no scalar load from
-   a device array; the raw-pointer escape hatches (`load_ptr_tko`, `_tko` tokens)
-   are the documented fallback. The four regular operations were measured first
-   rather than guessing at an irregular kernel.
-2. **The launch path**: async device operations, batching and CUDA graph replay,
-   with warmup excluded.
-3. **Tuning**: the sweep above is bounded and hand-picked. `cutile::tune` ships
-   an experimental autotuner that would search it properly.
+1. **The launch path**: async device operations, batching and CUDA graph replay,
+   with warmup excluded. Until then the event-span column cannot separate a
+   slower runtime from a slower kernel.
+2. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
+   `cutile::tune` ships an experimental autotuner that would search it properly,
+   and the same question applies to the triangle and neighbor tiles, which were
+   never swept.
+3. **Neighbor's kernel time**, once the device is free.
 4. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
@@ -157,9 +181,11 @@ assembler runs:
 source scripts/cutile-env.sh
 cd examples/cutile && cargo build --release && cd ../..
 .venv/bin/python examples/oxide/comparison.py --implementation cutile \
-  --ops matmul gelu layernorm triangle --experiment mage-004 \
-  --output artifacts/mage-004-comparison --rounds 3 --iterations 100 --warmup 25
+  --experiment mage-004 --output artifacts/mage-004-comparison \
+  --rounds 3 --iterations 100 --warmup 25
 ```
 
-`CUTILE_MATMUL_TILE=BM,BN,BK` selects a different matmul specialization, which is
-how the sweep above was taken.
+`--ops matmul` (or any subset) restricts a run. `CUTILE_MATMUL_TILE=BM,BN,BK`
+selects a different matmul specialization, which is how the sweep above was
+taken. Run one device experiment at a time: a concurrent capture inflates these
+spans.
