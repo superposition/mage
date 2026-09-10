@@ -1,0 +1,41 @@
+<section class="profile-comparison" aria-label="Measured comparison of PyTorch, Triton, and Rust">
+  <p class="profile-context">RTX 4090 · FP32 · identical inputs<br>PyTorch baseline → first Triton and cuda-oxide Rust kernels</p>
+  <div class="profile-tabs" role="tablist" aria-label="Profile measurement" hidden>
+    <button type="button" role="tab" id="tab-kernel" aria-controls="plot-kernel" aria-selected="true">GPU kernel time</button>
+    <button type="button" role="tab" id="tab-event" aria-controls="plot-event" aria-selected="false" tabindex="-1">Time around the call</button>
+    <button type="button" role="tab" id="tab-launches" aria-controls="plot-launches" aria-selected="false" tabindex="-1">Launches</button>
+  </div>
+  {% assign metrics = 'kernel,event,launches' | split: ',' %}
+  {% for metric in metrics %}
+  <figure id="plot-{{ metric }}" class="profile-plot">
+    <picture>
+      <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-001/comparison-' | append: metric | append: '-mobile.svg' | relative_url }}">
+      <img src="{{ '/assets/figures/mage-001/comparison-' | append: metric | append: '.svg' | relative_url }}" width="740" height="650"
+           alt="{% if metric == 'kernel' %}GPU kernel time: Triton has the shortest measured time for GELU, LayerNorm, and neighbor aggregation. PyTorch has the shortest for matrix multiplication and triangle contraction.{% elsif metric == 'event' %}Time around the call: Rust has the shortest event span for GELU and neighbor aggregation. PyTorch has the shortest for the other three operations. These spans include possible launch gaps.{% else %}Kernel launches per operation: PyTorch launches 1 for matmul, 2 for GELU, 1 for LayerNorm, 3 for triangle contraction, and 4 for neighbor aggregation. Triton and Rust each launch 1 for every operation.{% endif %}">
+    </picture>
+    <figcaption>
+      {% if metric == 'kernel' %}
+      <p>Time spent executing GPU kernels, summed per operation. A separate Nsight Systems capture of 100 iterations; gaps between launches are excluded. The WSL timestamp fallback has reduced precision.</p>
+      {% elsif metric == 'event' %}
+      <p>Mean of 300 warmed CUDA-event spans, collected in three rounds with rotating order. Whiskers show the range of the three round means, not a confidence interval. These spans can include gaps while the host submits work.</p>
+      {% else %}
+      <p>Captured launches divided by 100 iterations. Both custom implementations use one kernel per operation. Fewer launches help explain the result; they do not guarantee a faster kernel.</p>
+      {% endif %}
+      <p class="profile-scale">Each row has its own scale. Compare implementations within a row.</p>
+      <div class="profile-links">
+        <a href="{{ '/assets/figures/mage-001/comparison-' | append: metric | append: '.svg' | relative_url }}" download>Download SVG</a>
+        <a href="{{ '/assets/figures/mage-001/comparison-' | append: metric | append: '.png' | relative_url }}" download>PNG</a>
+        <a href="https://github.com/superposition/mage/blob/master/docs/experiments/mage-001-comparison.md">Data & method ↗</a>
+      </div>
+      <details class="profile-values">
+        <summary>Read the plotted values{% unless metric == 'launches' %} (µs){% endunless %}</summary>
+        <table>
+          <thead><tr><th scope="col">Operation</th><th scope="col">PyTorch</th><th scope="col">Triton</th><th scope="col">Rust</th></tr></thead>
+          <tbody>{% for row in site.data.profile_comparison.rows %}<tr><th scope="row">{{ row.label }}</th><td>{{ row.measurements.python[metric] | round: 1 }}</td><td>{{ row.measurements.triton[metric] | round: 1 }}</td><td>{{ row.measurements.rust[metric] | round: 1 }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </details>
+    </figcaption>
+  </figure>
+  {% endfor %}
+  <p class="profile-limit">These are forward-only learning kernels at five fixed shapes, on one WSL workstation with unlocked clocks. Compilation, transfers, and service startup are excluded. This is a comparison of these implementations—not a production workload benchmark.</p>
+</section>

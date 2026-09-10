@@ -138,3 +138,25 @@ mjx-container[display] { overflow-x: auto; overflow-y: hidden; padding-block: 8p
   .idea-threads > div { display: grid; grid-template-columns: 90px 1fr; align-items: baseline; gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* Measured profiles: one compact figure, three views of the same work. */
+.profile-comparison { margin: 18px 0 26px; }
+.profile-context { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.profile-tabs { display: flex; flex-wrap: wrap; gap: 5px; border-bottom: 1px solid var(--rule); padding-bottom: 9px; margin-bottom: 17px; }
+.profile-tabs[hidden], .profile-plot[hidden] { display: none; }
+.profile-tabs button { font: inherit; font-size: 12px; line-height: 1.5; padding: 7px 10px; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--muted); cursor: pointer; }
+.profile-tabs button[aria-selected="true"] { color: var(--ink); background: var(--wash); border-color: var(--rule); }
+.profile-tabs button:hover { color: var(--ink); }
+.profile-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.profile-plot { margin: 0; }
+.profile-plot img { display: block; width: 100%; height: auto; }
+.profile-plot figcaption, .profile-limit { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.profile-plot figcaption p { margin: 8px 0; }
+.profile-scale { color: var(--ink); }
+.profile-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 11px; }
+.profile-links a { text-decoration: none; }
+.profile-values { margin-block: 12px; }
+.profile-values summary { cursor: pointer; }
+.profile-values table { font-variant-numeric: tabular-nums; margin: 12px 0; font-size: 12px; }
+.profile-values th, .profile-values td { padding: 8px 10px; }
+.profile-limit { border-top: 1px solid var(--rule); padding-top: 12px; }

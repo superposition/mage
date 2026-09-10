@@ -1,0 +1,5 @@
+# Generated plots and retained measurements are reviewable without expanding
+# thousands of SVG path coordinates and individual samples in every code diff.
+docs/assets/figures/** linguist-generated=true
+docs/assets/results/** linguist-generated=true
+docs/_data/profile_comparison.json linguist-generated=true
