@@ -84,8 +84,8 @@ mod kernels {
     ) {
         use cuda_device::vector::{self, F32x4};
 
-        static mut AS: SharedArray<f32, 1024> = SharedArray::UNINIT; // 64 rows x 16 columns
-        static mut BS: SharedArray<f32, 1024> = SharedArray::UNINIT; // 16 rows x 64 columns
+        static mut AS: SharedArray<f32, 2048> = SharedArray::UNINIT; // 64 rows x 32 columns
+        static mut BS: SharedArray<f32, 2048> = SharedArray::UNINIT; // 32 rows x 64 columns
         let tx = thread::threadIdx_x() as usize; // 0..16, column group
         let ty = thread::threadIdx_y() as usize; // 0..16, row group
         let tid = ty * 16 + tx;
@@ -96,37 +96,42 @@ mod kernels {
         let mut acc = [[0.0f32; 4]; 4];
         let mut step = 0usize;
         while step < kk {
-            // One quad per thread: A is loaded row-major, B column-block-major.
-            let a_start = (row0 + tid / 4) * kk + step + (tid % 4) * 4;
-            if let Some(quad) = vector::as_vectors::<F32x4>(&a[a_start..a_start + 4]) {
-                let v = quad[0].as_slice();
-                let slot = (tid / 4) * 16 + (tid % 4) * 4;
-                unsafe {
-                    AS[slot] = v[0];
-                    AS[slot + 1] = v[1];
-                    AS[slot + 2] = v[2];
-                    AS[slot + 3] = v[3];
+            // Two quads per thread: A is loaded row-major, B column-block-major.
+            let mut pass = 0usize;
+            while pass < 2 {
+                let q = tid + pass * 256;
+                let a_start = (row0 + q / 8) * kk + step + (q % 8) * 4;
+                if let Some(quad) = vector::as_vectors::<F32x4>(&a[a_start..a_start + 4]) {
+                    let v = quad[0].as_slice();
+                    let slot = (q / 8) * 32 + (q % 8) * 4;
+                    unsafe {
+                        AS[slot] = v[0];
+                        AS[slot + 1] = v[1];
+                        AS[slot + 2] = v[2];
+                        AS[slot + 3] = v[3];
+                    }
                 }
-            }
-            let b_start = (step + tid / 16) * nn + col0 + (tid % 16) * 4;
-            if let Some(quad) = vector::as_vectors::<F32x4>(&b[b_start..b_start + 4]) {
-                let v = quad[0].as_slice();
-                let slot = (tid / 16) * 64 + (tid % 16) * 4;
-                unsafe {
-                    BS[slot] = v[0];
-                    BS[slot + 1] = v[1];
-                    BS[slot + 2] = v[2];
-                    BS[slot + 3] = v[3];
+                let b_start = (step + q / 16) * nn + col0 + (q % 16) * 4;
+                if let Some(quad) = vector::as_vectors::<F32x4>(&b[b_start..b_start + 4]) {
+                    let v = quad[0].as_slice();
+                    let slot = (q / 16) * 64 + (q % 16) * 4;
+                    unsafe {
+                        BS[slot] = v[0];
+                        BS[slot + 1] = v[1];
+                        BS[slot + 2] = v[2];
+                        BS[slot + 3] = v[3];
+                    }
                 }
+                pass += 1;
             }
             thread::sync_threads();
             let mut i = 0usize;
-            while i < 16 {
+            while i < 32 {
                 let mut av = [0.0f32; 4];
                 let mut r = 0usize;
                 while r < 4 {
                     unsafe {
-                        av[r] = AS[(ty * 4 + r) * 16 + i];
+                        av[r] = AS[(ty * 4 + r) * 32 + i];
                     }
                     r += 1;
                 }
@@ -150,7 +155,7 @@ mod kernels {
                 i += 1;
             }
             thread::sync_threads();
-            step += 16;
+            step += 32;
         }
         // SAFETY: the host validated `m * n` output elements and launched exactly
         // one 64x64 tile per block, so every written cell is inside the buffer and
@@ -555,7 +560,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             match manifest.op.as_str() {
                 "matmul" => {
                     let (m, n, k) = (dims[0], dims[1], dims[2]);
-                    if m % 64 == 0 && n % 64 == 0 && k % 16 == 0 {
+                    if m % 64 == 0 && n % 64 == 0 && k % 32 == 0 {
                         // Square 64x64 tiles, no edge masking needed.
                         module.tiled_matmul_registers(
                             &stream,
