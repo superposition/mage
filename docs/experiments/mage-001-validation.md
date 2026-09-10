@@ -1,6 +1,6 @@
 # mage-001: measurements and validation
 
-[Experiment contract](https://superposition.github.io/mage/experiments/mage-001/) ·
+[Experiment contract](../kernel-contracts.md) ·
 [Journal](https://superposition.github.io/journal/why-this-notebook/)
 
 ## Completed checks
