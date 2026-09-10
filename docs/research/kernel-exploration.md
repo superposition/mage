@@ -1,9 +1,10 @@
 # Continuing the kernel exploration
 
-Status: **next experiments proposed; no mage-002 performance result yet**.
+Status: **the rewritten Rust kernels are measured and published as mage-002; the launch-path comparison below is still to come**.
 
 [Journal](https://superposition.github.io/) ·
 [What the first profiles taught us](https://superposition.github.io/journal/faster-calls-slower-kernels/) ·
+[Rewriting the layer norm and matmul kernels](https://superposition.github.io/journal/rewriting-the-layer-norm-and-matmul-kernels/) ·
 [Current graphs](https://superposition.github.io/mage/experiments/mage-001/#profiles) ·
 [Evidence and method](../experiments/mage-001-comparison.md)
 
@@ -94,8 +95,9 @@ the same samples used to report its performance; confirm it in fresh runs.
 Start from `examples/oxide/comparison.py`, `triton_target.py`, `profile_suite.py`,
 and `export_comparison.py`; the native kernels are in `examples/oxide/src/main.rs`.
 The shared contracts are in [kernel-contracts.md](../kernel-contracts.md).
-`scripts/plot-comparison.py` currently targets mage-001, so make its experiment
-selection explicit before using it to publish later measurements.
+`scripts/plot-comparison.py` and `scripts/plot-kernel-improvements.py` take their
+experiment namespace as `--experiment` (default mage-001 and mage-002), so later
+measurements can be plotted without editing the scripts.
 
 ## Before calling it a production improvement
 

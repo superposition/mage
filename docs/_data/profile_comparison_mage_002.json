@@ -1,0 +1,168 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "rounds": 3,
+  "samples": 300,
+  "rows": [
+    {
+      "op": "matmul",
+      "label": "Matrix multiplication",
+      "dims": [
+        1024,
+        1024,
+        1024
+      ],
+      "measurements": {
+        "python": {
+          "event": 57.2908803075552,
+          "event_min": 52.07456048578024,
+          "event_max": 64.89152040332556,
+          "kernel": 54.550129999999996,
+          "launches": 1
+        },
+        "triton": {
+          "event": 91.45087942481041,
+          "event_min": 88.73343907296658,
+          "event_max": 95.32095968723297,
+          "kernel": 84.68079,
+          "launches": 1
+        },
+        "rust": {
+          "event": 144.4102388123671,
+          "event_min": 144.3686392903328,
+          "event_max": 144.44063857197762,
+          "kernel": 141.70092,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "gelu",
+      "label": "Bias + GELU",
+      "dims": [
+        4096,
+        768
+      ],
+      "measurements": {
+        "python": {
+          "event": 24.427839803198975,
+          "event_min": 20.763199776411057,
+          "event_max": 28.143679834902287,
+          "kernel": 15.83081,
+          "launches": 2
+        },
+        "triton": {
+          "event": 26.086933224772412,
+          "event_min": 24.189439713954926,
+          "event_max": 27.90976001881063,
+          "kernel": 7.6943399999999995,
+          "launches": 1
+        },
+        "rust": {
+          "event": 13.040746878832579,
+          "event_min": 12.679040171205997,
+          "event_max": 13.747840253636241,
+          "kernel": 11.02279,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "layernorm",
+      "label": "LayerNorm",
+      "dims": [
+        4096,
+        768
+      ],
+      "measurements": {
+        "python": {
+          "event": 22.873600081851084,
+          "event_min": 15.295359985902905,
+          "event_max": 30.27904004789889,
+          "kernel": 11.35152,
+          "launches": 1
+        },
+        "triton": {
+          "event": 20.86357322211067,
+          "event_min": 19.64831997640431,
+          "event_max": 21.85311988927424,
+          "kernel": 8.06119,
+          "launches": 1
+        },
+        "rust": {
+          "event": 15.426559985304872,
+          "event_min": 13.482879912480712,
+          "event_max": 19.044800121337175,
+          "kernel": 11.08542,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "triangle",
+      "label": "Triangle contraction",
+      "dims": [
+        128,
+        32
+      ],
+      "measurements": {
+        "python": {
+          "event": 57.71520049621662,
+          "event_min": 54.440640434622765,
+          "event_max": 60.865600630640984,
+          "kernel": 28.43495,
+          "launches": 3
+        },
+        "triton": {
+          "event": 100.88821386297543,
+          "event_min": 97.40288093686104,
+          "event_max": 105.25727957487106,
+          "kernel": 93.8064,
+          "launches": 1
+        },
+        "rust": {
+          "event": 83.38805171350639,
+          "event_min": 83.13407845795155,
+          "event_max": 83.72639834880829,
+          "kernel": 80.44537,
+          "launches": 1
+        }
+      }
+    },
+    {
+      "op": "neighbor",
+      "label": "Neighbor aggregation",
+      "dims": [
+        4096,
+        64,
+        65536
+      ],
+      "measurements": {
+        "python": {
+          "event": 101.05247971912225,
+          "event_min": 98.3929592370987,
+          "event_max": 104.29471984505653,
+          "kernel": 75.80963,
+          "launches": 4
+        },
+        "triton": {
+          "event": 36.24170667491853,
+          "event_min": 20.559039851650596,
+          "event_max": 50.73056005872786,
+          "kernel": 7.95649,
+          "launches": 1
+        },
+        "rust": {
+          "event": 12.875626838455597,
+          "event_min": 12.701120227575302,
+          "event_max": 13.131200140342116,
+          "kernel": 10.27878,
+          "launches": 1
+        }
+      }
+    }
+  ],
+  "source_sha256": {
+    "comparison-results.json": "ce078c0557d7b05dff4f6100d4c3a84a84bfcc4ff23f11ef46187a2d5c959a64",
+    "comparison-profiles.json": "ae5509b6edfb9e66488afe132d883cb325ff8c29fdb87cd83f883586b83eb532"
+  }
+}

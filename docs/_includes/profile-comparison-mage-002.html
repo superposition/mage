@@ -1,0 +1,116 @@
+<section class="profile-comparison" aria-label="Measured comparison of the rewritten Rust kernels">
+  <p class="profile-context">RTX 4090 · FP32 · identical inputs<br>Rewritten Rust kernels beside mage-001 and the library baselines</p>
+  {% assign rewritten = 'layernorm,matmul' | split: ',' %}
+  <figure class="profile-plot">
+    <picture>
+      <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-002/kernel-improvements-mobile.svg' | relative_url }}">
+      <img src="{{ '/assets/figures/mage-002/kernel-improvements.svg' | relative_url }}" width="740" height="341"
+           alt="GPU kernel time for matrix multiplication and layer normalization, four bars each: PyTorch, Triton, the mage-001 Rust kernel, and the rewritten mage-002 Rust kernel. Matrix multiplication falls from 344.0 to 141.7 microseconds; layer normalization falls from 18.6 to 11.1 microseconds.">
+    </picture>
+    <figcaption>
+      <p>Time spent executing GPU kernels, summed per operation in a separate Nsight Systems capture of 100 iterations;
+      gaps between launches are excluded. PyTorch, Triton, and the rewritten Rust kernel come from one capture session.
+      The mage-001 Rust bar is the earlier session.</p>
+      <p class="profile-scale">Each panel has its own scale. Lower is better.</p>
+      <div class="profile-links">
+        <a href="{{ '/assets/figures/mage-002/kernel-improvements.svg' | relative_url }}" download>Download SVG</a>
+        <a href="{{ '/assets/figures/mage-002/kernel-improvements.png' | relative_url }}" download>PNG</a>
+        <a href="https://github.com/superposition/mage/blob/master/docs/assets/results/mage-002/comparison-profiles.json">Captures ↗</a>
+      </div>
+      <details class="profile-values">
+        <summary>Read the plotted values and the unchanged operations (µs)</summary>
+        <table>
+          <thead><tr><th scope="col">Operation</th><th scope="col">Rust mage-001</th><th scope="col">Rust mage-002</th><th scope="col">Change</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+          {% for row in site.data.profile_comparison_mage_002.rows %}
+          {% assign before = site.data.profile_comparison.rows | where: "op", row.op | first %}
+          {% assign delta = row.measurements.rust.kernel | minus: before.measurements.rust.kernel %}
+          <tr>
+            <th scope="row">{{ row.label }}</th>
+            <td>{{ before.measurements.rust.kernel | round: 1 }}</td>
+            <td>{{ row.measurements.rust.kernel | round: 1 }}</td>
+            <td>{{ delta | times: 100.0 | divided_by: before.measurements.rust.kernel | round: 1 }}%</td>
+            <td>{% if rewritten contains row.op %}rewritten{% else %}control{% endif %}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    </figcaption>
+  </figure>
+  <div class="profile-tabs" role="tablist" aria-label="Profile measurement" hidden>
+    <button type="button" role="tab" id="tab-kernel" aria-controls="plot-kernel" aria-selected="true">GPU kernel time</button>
+    <button type="button" role="tab" id="tab-event" aria-controls="plot-event" aria-selected="false" tabindex="-1">Time around the call</button>
+    <button type="button" role="tab" id="tab-launches" aria-controls="plot-launches" aria-selected="false" tabindex="-1">Launches</button>
+  </div>
+  {% assign metrics = 'kernel,event,launches' | split: ',' %}
+  {% for metric in metrics %}
+  <figure id="plot-{{ metric }}" class="profile-plot">
+    <picture>
+      <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-002/comparison-' | append: metric | append: '-mobile.svg' | relative_url }}">
+      <img src="{{ '/assets/figures/mage-002/comparison-' | append: metric | append: '.svg' | relative_url }}" width="740" height="650"
+           alt="{% if metric == 'kernel' %}GPU kernel time per operation in the mage-002 capture: Triton has the shortest time for GELU, LayerNorm, and neighbor aggregation; PyTorch has the shortest for matrix multiplication and triangle contraction. Rust is second for LayerNorm and neighbor aggregation.{% elsif metric == 'event' %}Time around the call: Rust has the shortest event span for GELU, LayerNorm, and neighbor aggregation; PyTorch has the shortest for matrix multiplication and triangle contraction. These spans include possible launch gaps.{% else %}Kernel launches per operation: PyTorch launches 1 for matmul, 2 for GELU, 1 for LayerNorm, 3 for triangle contraction, and 4 for neighbor aggregation. Triton and Rust each launch 1 for every operation.{% endif %}">
+    </picture>
+    <figcaption>
+      {% if metric == 'kernel' %}
+      <p>The same picture as in mage-001, measured again in the new capture. Layer normalization and matrix multiplication are the rewritten kernels; the other three are controls.</p>
+      {% elsif metric == 'event' %}
+      <p>Mean of 300 warmed CUDA-event spans, collected in three rounds with rotating implementation order. Whiskers show the range of the three round means, not a confidence interval. A span can include gaps while the host submits work.</p>
+      {% else %}
+      <p>Captured launches divided by 100 iterations. The counts are unchanged from mage-001: one kernel per custom operation.</p>
+      {% endif %}
+      <p class="profile-scale">Each row has its own scale. Compare implementations within a row.</p>
+      <div class="profile-links">
+        <a href="{{ '/assets/figures/mage-002/comparison-' | append: metric | append: '.svg' | relative_url }}" download>Download SVG</a>
+        <a href="{{ '/assets/figures/mage-002/comparison-' | append: metric | append: '.png' | relative_url }}" download>PNG</a>
+        <a href="https://github.com/superposition/mage/blob/master/docs/assets/results/mage-002/comparison-results.json">Event samples ↗</a>
+      </div>
+      <details class="profile-values">
+        <summary>Read the plotted values{% unless metric == 'launches' %} (µs){% endunless %}</summary>
+        <table>
+          <thead><tr><th scope="col">Operation</th><th scope="col">PyTorch</th><th scope="col">Triton</th><th scope="col">Rust</th></tr></thead>
+          <tbody>{% for row in site.data.profile_comparison_mage_002.rows %}<tr><th scope="row">{{ row.label }}</th><td>{{ row.measurements.python[metric] | round: 1 }}</td><td>{{ row.measurements.triton[metric] | round: 1 }}</td><td>{{ row.measurements.rust[metric] | round: 1 }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </details>
+    </figcaption>
+  </figure>
+  {% endfor %}
+  <figure class="profile-plot">
+    <picture>
+      <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-002/comparison-views-mobile.svg' | relative_url }}">
+      <img src="{{ '/assets/figures/mage-002/comparison-views.svg' | relative_url }}" width="740" height="351"
+           alt="GPU kernel time and time around the call for the same five operations in the mage-002 capture: for Bias + GELU, Triton has the shorter kernel time while Rust has the shorter event span; the rewritten Rust LayerNorm now has the second shortest kernel time.">
+    </picture>
+    <figcaption>
+      <p>Both views in one figure. The top row is time inside the kernels; the bottom row is time around the call.
+      Each column has its own scale, so implementations compare within a column.</p>
+      <div class="profile-links">
+        <a href="{{ '/assets/figures/mage-002/comparison-views.svg' | relative_url }}" download>Download SVG</a>
+        <a href="{{ '/assets/figures/mage-002/comparison-views.png' | relative_url }}" download>PNG</a>
+      </div>
+      <details class="profile-values">
+        <summary>Read the Rust values for both views (µs)</summary>
+        <table>
+          <thead><tr><th scope="col">Operation</th><th scope="col">Kernel mage-001</th><th scope="col">Kernel mage-002</th><th scope="col">Span mage-001</th><th scope="col">Span mage-002</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+          {% for row in site.data.profile_comparison_mage_002.rows %}
+          {% assign before = site.data.profile_comparison.rows | where: "op", row.op | first %}
+          <tr>
+            <th scope="row">{{ row.label }}</th>
+            <td>{{ before.measurements.rust.kernel | round: 1 }}</td>
+            <td>{{ row.measurements.rust.kernel | round: 1 }}</td>
+            <td>{{ before.measurements.rust.event | round: 1 }}</td>
+            <td>{{ row.measurements.rust.event | round: 1 }}</td>
+            <td>{% if rewritten contains row.op %}rewritten{% else %}control{% endif %}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    </figcaption>
+  </figure>
+  <p class="profile-limit">Forward-only learning kernels at five fixed shapes, on one WSL workstation with unlocked clocks.
+  Compilation, transfers, and service startup are excluded. The three control operations keep their mage-001 kernels, so their
+  measurements show the run-to-run variation of this harness. This is a comparison of these implementations, not a
+  production workload benchmark.</p>
+</section>

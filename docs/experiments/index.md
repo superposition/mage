@@ -9,4 +9,10 @@ A matrix product contains opportunities for reuse. A reduction requires partial 
 
 [Read the first investigation]({{ '/experiments/mage-001/' | relative_url }}).
 
+### 002 — Keeping values close to the arithmetic
+
+A reduction ends in one value per row, so partial answers have to meet somewhere. A tile decides how often shared memory is read. Two Rust kernels were rearranged around both questions.
+
+[Read the second investigation]({{ '/experiments/mage-002/' | relative_url }}).
+
 The code and detailed evidence are maintained [in GitHub](https://github.com/superposition/mage). The [Superposition journal](https://superposition.github.io/) follows the motivation behind the work.
