@@ -341,6 +341,103 @@ mod kernels {
         }
     }
 
+    /// Two warps per row, half a row each, combined through one shared exchange.
+    ///
+    /// Doubling the warps per row doubles the threads the grid can keep resident,
+    /// which is what the single-warp version is short of. Each warp reduces its half
+    /// with shuffles; the two partial sums meet once in shared memory behind a single
+    /// barrier. The host picks this for widths up to 2048 that are multiples of four.
+    #[kernel]
+    pub fn layer_norm_pair(
+        width: u32,
+        rows: u32,
+        x: &[f32],
+        gamma: &[f32],
+        beta: &[f32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+        use cuda_device::warp;
+
+        static mut PARTIAL: SharedArray<f32, 16> = SharedArray::UNINIT;
+        let d = width as usize;
+        let tid = thread::threadIdx_x() as usize;
+        let lane = tid & 31;
+        let warp = tid >> 5;
+        // 256 threads per block: four rows, two warps each.
+        let half = warp & 1;
+        let row = thread::blockIdx_x() as usize * 4 + (warp >> 1);
+        if row >= rows as usize {
+            return;
+        }
+        let base = row * d;
+        let Some(quads) = vector::as_vectors::<F32x4>(&x[base..base + d]) else {
+            return;
+        };
+        let Some(gamma_quads) = vector::as_vectors::<F32x4>(gamma) else {
+            return;
+        };
+        let Some(beta_quads) = vector::as_vectors::<F32x4>(beta) else {
+            return;
+        };
+        let span = quads.len().div_ceil(2);
+
+        let mut sum = 0.0f32;
+        let mut squares = 0.0f32;
+        let mut i = 0usize;
+        while i * 32 < span {
+            let q = half * span + lane + 32 * i;
+            if q < quads.len() {
+                let v = quads[q].as_slice();
+                sum += v[0] + v[1] + v[2] + v[3];
+                squares += v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
+            }
+            i += 1;
+        }
+        let mut offset = 16u32;
+        while offset > 0 {
+            sum += warp::shuffle_down_f32(sum, offset);
+            squares += warp::shuffle_down_f32(squares, offset);
+            offset >>= 1;
+        }
+        if lane == 0 {
+            unsafe {
+                PARTIAL[warp * 2] = sum;
+                PARTIAL[warp * 2 + 1] = squares;
+            }
+        }
+        thread::sync_threads();
+        let pair = (warp >> 1) * 4;
+        let total = unsafe { PARTIAL[pair] + PARTIAL[pair + 2] };
+        let total_squares = unsafe { PARTIAL[pair + 1] + PARTIAL[pair + 3] };
+        let mean = total / d as f32;
+        let variance = total_squares / d as f32 - mean * mean;
+        let inv = 1.0 / cuda_device::float::sqrt_rn_f32(variance + 1e-5);
+
+        // SAFETY: the host validated `rows * width` output elements and each warp
+        // owns the disjoint half-row at `base`, so this view aliases no other warp.
+        let out_row = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().add(base), d) };
+        let Some(out_quads) = vector::as_vectors_mut::<F32x4>(out_row) else {
+            return;
+        };
+        i = 0;
+        while i * 32 < span {
+            let q = half * span + lane + 32 * i;
+            if q < quads.len() {
+                let v = quads[q].as_slice();
+                let gv = gamma_quads[q].as_slice();
+                let bv = beta_quads[q].as_slice();
+                out_quads[q] = F32x4::new([
+                    (v[0] - mean) * inv * gv[0] + bv[0],
+                    (v[1] - mean) * inv * gv[1] + bv[1],
+                    (v[2] - mean) * inv * gv[2] + bv[2],
+                    (v[3] - mean) * inv * gv[3] + bv[3],
+                ]);
+            }
+            i += 1;
+        }
+    }
+
     #[kernel]
     pub fn triangle(n: u32, channels: u32, a: &[f32], b: &[f32], mut out: DisjointSlice<f32>) {
         let index = thread::index_1d();
@@ -609,7 +706,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                         block_dim: (256, 1, 1),
                         shared_mem_bytes: 0,
                     };
-                    if width % 4 == 0 {
+                    if width % 4 == 0 && width <= 2048 {
+                        // Two warps per row: 1024 blocks instead of 512, so more warps stay resident.
+                        module.layer_norm_pair(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (rows.div_ceil(4), 1, 1),
+                                block_dim: (256, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            width,
+                            rows,
+                            &a_dev,
+                            &b_dev,
+                            &c_dev,
+                            &mut out,
+                        )
+                    } else if width % 4 == 0 {
                         module.layer_norm_warp(
                             &stream, block, width, rows,
                             &a_dev, &b_dev, &c_dev, &mut out,
