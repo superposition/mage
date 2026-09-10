@@ -606,10 +606,10 @@ def main(argv: list[str] | None = None) -> int:
         append_ledger(entry)
         entries.append(entry)
 
-        best_median = (statistics.median(round_medians("best"))
-                       if round_medians("best") else None)
-        new_median = (statistics.median(round_medians("new"))
-                      if round_medians("new") else None)
+        # Same statistic the decision uses (the fastest observed round on each arm),
+        # so the printed line can never disagree with the recorded verdict.
+        best_median = min(round_medians("best")) if round_medians("best") else None
+        new_median = min(round_medians("new")) if round_medians("new") else None
         ratio = (new_median / best_median) if (new_median and best_median) else None
         print(
             f"gen {generation:>3} | {proposal.knob} "

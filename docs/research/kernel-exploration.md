@@ -92,6 +92,11 @@ the same samples used to report its performance; confirm it in fresh runs.
   Python interpreter selection, and profiler-hook restoration intact. Extend
   the relevant regression checks when a change touches those behaviors.
 
+- The evolution loop (`docs/kernel-evolution.md`, `scripts/evolve.py`) turns the
+  experiment runner on itself: it renders a variant from parameters, builds it,
+  gates it on the reference, measures it against both the incumbent and the
+  committed kernel in the same round, and records the decision in a ledger.
+
 Start from `examples/oxide/comparison.py`, `triton_target.py`, `profile_suite.py`,
 and `export_comparison.py`; the native kernels are in `examples/oxide/src/main.rs`.
 The shared contracts are in [kernel-contracts.md](../kernel-contracts.md).

@@ -121,8 +121,8 @@ against 82.93 µs (+4.94%)**, maximum absolute error 0.0, sample-to-sample sprea
 0.1 µs. The baseline itself reads 81.9-82.9 µs across these sessions, which bounds how
 much of the difference any single pairing can attribute.
 
-Ledger and summary for the run are committed under
-`docs/assets/results/evolution-loop/`.
+Ledger and summary for the matrix-multiply run are committed under
+`docs/assets/results/evolution-loop/matmul-ledger.jsonl` and `matmul-summary.json`.
 
 ## Correctness findings
 
@@ -151,6 +151,33 @@ fixed in the generator:
 The search space is now verified as a set: 40 combinations of block, staging layout,
 staging mode and k_step are all correct at 256x256x128, and the layernorm family is
 correct across its whole knob set.
+
+## LayerNorm: a null result
+
+The same loop on layer normalization (`--op layernorm`, starting from the committed
+configuration) ran four generations and accepted none. Worst-of-round medians, event span
+around the call, against the incumbent:
+
+| Gen | Change | Incumbent µs | Candidate µs | Ratio | Decision |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 1 | `warps_per_row` 2 -> 1 | 12.29 | 13.07 | 1.064 | reject (control drifted 12.5%, so the round is not judged) |
+| 2 | `warps_per_row` 2 -> 4 | 12.29 | 12.29 | 1.000 | reject |
+| 3 | `threads` 256 -> 128 | 12.29 | 12.29 | 1.000 | reject (0.52% gain, below the 1% threshold) |
+| 4 | `threads` 256 -> 512 | 12.29 | 13.31 | 1.083 | reject |
+
+The committed configuration (two warps per row, 256 threads) is a local optimum in this
+two-knob space, and the loop reports that instead of manufacturing an improvement. Note
+the first generation: at a 12 µs span the committed control is sensitive enough that a
+12.5% excursion occurred inside one generation, and the loop refused to judge those
+rounds rather than accept a candidate whose win would have been clock noise.
+
+The remaining distance to Triton's layer-normalization kernel (10.05 µs against 7.99 µs of
+GPU kernel time in mage-003) is not reachable by re-assigning the existing work; it needs a
+different decomposition, which is the case for a proposer that can write structure rather
+than select constants.
+
+Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` and
+`layernorm-summary.json`.
 
 ## What the loop does not establish
 
