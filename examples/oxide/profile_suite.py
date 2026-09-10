@@ -8,10 +8,12 @@ import torch
 from mage.profiler.backends import NcuBackend, NsysBackend
 from mage.profiler.models import ProfileSession
 from mage.profiler.storage import ProfileDB
-from experiment import DEFAULTS
+from experiment import DEFAULTS, IMPLEMENTATIONS, resolve_implementation
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--backend", choices=["nsys", "ncu"], default="nsys")
+parser.add_argument("--implementation", choices=sorted(IMPLEMENTATIONS), default="oxide",
+                    help="which native implementation the 'rust' target runs")
 parser.add_argument("--inputs", type=Path, default=Path("artifacts/mage-001"))
 parser.add_argument("--output", type=Path, default=Path("artifacts/mage-001-profiles"))
 parser.add_argument("--iterations", type=int)
@@ -23,12 +25,13 @@ if iterations <= 0:
 args.output.mkdir(parents=True, exist_ok=True)
 db = ProfileDB(args.output / "profiles.db")
 base = Path(__file__).resolve().parent
+native = resolve_implementation(args.implementation)["binary"].resolve()
 summaries = []
 for op in DEFAULTS:
     for language in args.languages:
         target = args.inputs.resolve() / op
         if language == "rust":
-            argv = [str(base / "target/release/mage-oxide"), str(target),
+            argv = [str(native), str(target),
                     "--iterations", str(iterations), "--capture"]
         else:
             script = "triton_target.py" if language == "triton" else "python_target.py"
@@ -44,6 +47,7 @@ for op in DEFAULTS:
             session.finish()
             session_id = db.save_session(session)
             row = {"operation": op, "language": language, "backend": args.backend,
+                   "implementation": args.implementation if language == "rust" else None,
                    "launches": len(metrics), "requested_iterations": iterations,
                    "kernel_names": sorted({m.kernel_name for m in metrics}),
                    "session_id": session_id, "report_dir": str(backend.report_dir),
