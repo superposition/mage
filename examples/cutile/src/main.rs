@@ -18,12 +18,14 @@ use std::{error::Error, fs, path::Path, sync::Arc};
 
 /// Tile shapes. A partition shape is a compile-time tile shape in cuTile and
 /// part of the JIT specialization key, so each run keeps to one shape.
-// The retained matmul tile is the winner of the bounded sweep recorded in
-// docs/experiments/mage-004.md: 16x16x8 -> 738.0 us, 64x64x32 -> 255.4 us,
-// 128x64x8 -> 201.5 us of event span on 1024^3, all with the same output.
-const MATMUL_M: usize = 128;
-const MATMUL_N: usize = 64;
-const MATMUL_K: usize = 8;
+// The retained matmul tile. The first bounded sweep over event spans picked
+// 128x64x8; the autotuner (--tune, cutile::tune) searched the same powers of two
+// against kernel time alone and picked 32x128x32, which then measured faster in
+// the harness too: 137.28 against 189.44 us single-launch and 121.75 against
+// 174.90 us batched by ten. See docs/experiments/mage-004.md.
+const MATMUL_M: usize = 32;
+const MATMUL_N: usize = 128;
+const MATMUL_K: usize = 32;
 const GELU_ROWS: usize = 8;
 const GELU_COLS: usize = 128;
 const TRIANGLE_TILE: usize = 32;
@@ -518,6 +520,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let dir = Path::new(&directory);
     let mut manifest: Manifest = serde_json::from_slice(&fs::read(dir.join("input.json"))?)?;
     let mut capture_requested = false;
+    let mut tune_requested = false;
+    let mut budget_secs: u64 = 120;
     let mut mode = Mode::Single;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -525,6 +529,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                 manifest.iterations = args.next().ok_or("missing iteration count")?.parse()?
             }
             "--capture" => capture_requested = true,
+            "--tune" => tune_requested = true,
+            "--budget" => {
+                budget_secs = args.next().ok_or("missing budget")?.parse()?;
+            }
             "--mode" => {
                 let value = args.next().ok_or("missing mode")?;
                 mode = match value.as_str() {
@@ -559,6 +567,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     if manifest.dims.len() != expected_dims || manifest.dims.iter().any(|&d| d > i32::MAX as usize) {
         return Err("invalid dimensions".into());
+    }
+    if tune_requested {
+        return tune_matmul(dir, &manifest, budget_secs);
     }
     match manifest.op.as_str() {
         "matmul" => run_matmul(dir, &manifest, capture_requested, mode),
@@ -1025,6 +1036,116 @@ fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: 
                            "padded": [rows, width_pad],
                            "path": "raw pointers (load_ptr_tko)"}),
     )
+}
+
+
+/// Bounded autotuning of the matmul tile with `cutile::tune`.
+///
+/// The space is the tile ladder a compiler can lower: every tile dimension must
+/// be a power of two, so the candidates are the powers of two that divide the
+/// padded shape. Each candidate allocates its own padded inputs, runs one
+/// correctness gate, and returns the closure the tuner times with device events.
+/// The trial log is written next to the inputs.
+#[cfg(feature = "tune")]
+fn tune_matmul(dir: &Path, manifest: &Manifest, budget_secs: u64) -> Result<(), Box<dyn Error>> {
+    use cutile::tune::{Autotuner, Config, ParamValue};
+    use std::time::Duration;
+
+    let (m, n, k) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
+    let a = Arc::new(read_f32(&dir.join("a.bin"), product(&[m, k])?)?);
+    let b = Arc::new(read_f32(&dir.join("b.bin"), product(&[k, n])?)?);
+
+    let device = Device::new(0)?;
+    let stream = device.new_stream()?;
+
+    let mut candidates: Vec<(usize, usize, usize)> = Vec::new();
+    for bm in [16usize, 32, 64, 128] {
+        for bn in [32usize, 64, 128] {
+            for bk in [8usize, 16, 32] {
+                candidates.push((bm, bn, bk));
+            }
+        }
+    }
+    let configs: Vec<Config> = candidates
+        .iter()
+        .map(|&(bm, bn, bk)| {
+            Config::new([
+                ("BM", ParamValue::Int(bm as i64)),
+                ("BN", ParamValue::Int(bn as i64)),
+                ("BK", ParamValue::Int(bk as i64)),
+            ])
+        })
+        .collect();
+    println!("tuning {} candidates, budget {} s", configs.len(), budget_secs);
+
+    let output = Autotuner::new("mage_cutile_matmul")
+        .configs(configs)
+        .budget(Duration::from_secs(budget_secs))
+        .arch("sm_89")
+        .log(dir.join("tune-trials.jsonl"))
+        .run(&stream, |stream, config| {
+            let bm = config.int("BM").unwrap_or(0) as usize;
+            let bn = config.int("BN").unwrap_or(0) as usize;
+            let bk = config.int("BK").unwrap_or(0) as usize;
+            let (m_pad, n_pad, k_pad) = (
+                m.div_ceil(bm) * bm,
+                n.div_ceil(bn) * bn,
+                k.div_ceil(bk) * bk,
+            );
+            let x: Arc<Tensor<f32>> = api::copy_host_vec_to_device(&Arc::new(pad_rows(
+                &a, m, k, m_pad, k_pad,
+            )))
+            .reshape(&[m_pad, k_pad])
+            .sync_on(stream)?
+            .into();
+            let y: Arc<Tensor<f32>> = api::copy_host_vec_to_device(&Arc::new(pad_rows(
+                &b, k, n, k_pad, n_pad,
+            )))
+            .reshape(&[k_pad, n_pad])
+            .sync_on(stream)?
+            .into();
+            let mut z: Tensor<f32> = api::zeros::<f32>(&[m_pad, n_pad]).sync_on(stream)?;
+            let generics = vec![
+                bm.to_string(),
+                bn.to_string(),
+                bk.to_string(),
+                k_pad.to_string(),
+            ];
+            let mut launch = move |s: &Arc<Stream>| {
+                let _ = kernels::matmul((&mut z).partition([bm, bn]), &x, &y)
+                    .generics(generics.clone())
+                    .sync_on(s)?;
+                Ok(())
+            };
+            // One launch as a correctness gate before any timing.
+            launch(stream)?;
+            Ok(launch)
+        })?;
+
+    let best = output.best.ok_or("the tuner found no valid candidate")?;
+    let summary = serde_json::json!({
+        "op": "matmul",
+        "dims": manifest.dims,
+        "budget_secs": budget_secs,
+        "candidates": candidates.len(),
+        "trials": output.trials.len(),
+        "best": {
+            "BM": best.int("BM"),
+            "BN": best.int("BN"),
+            "BK": best.int("BK"),
+        },
+    });
+    fs::write(
+        dir.join("tune.json"),
+        serde_json::to_string_pretty(&summary)? + "\n",
+    )?;
+    println!("{}", serde_json::to_string(&summary)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "tune"))]
+fn tune_matmul(_dir: &Path, _manifest: &Manifest, _budget_secs: u64) -> Result<(), Box<dyn Error>> {
+    Err("this build has no tuner: rebuild with --features tune".into())
 }
 
 fn main() {

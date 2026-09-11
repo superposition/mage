@@ -223,8 +223,8 @@ profiling commands next to the oxide ones.
 
 | Item | State | Next test |
 | --- | --- | --- |
-| The launch path | Partly measured: batching shows ~16 µs of host cost per awaited launch (~32 µs for matmul) against the SIMT runtime's 2–3 µs, and batched spans converge on kernel time | Extend the mode to CUDA graph replay, and time PyTorch and Triton batched so all three are matched |
-| Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region; the triangle and neighbor tiles were never swept at all |
+| The launch path | Measured: ~16 µs of host cost per awaited launch (~32 µs for matmul) against the SIMT runtime's 2–3 µs; batching and CUDA graph replay converge the span on kernel time, and all three implementations are now matched | Capture graphs for the other three kernels, which reject `--mode graph` today |
+| Autotuning | Done for matmul: `cutile::tune` over 36 tile candidates beat the hand-picked sweep's winner (137.28 against 189.44 µs single-launch) and is the shipped tile | Re-run the comparison with the tuned tile, and sweep the triangle and neighbor tiles, which were never tuned |
 | Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
 
 ## Where the results live

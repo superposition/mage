@@ -192,6 +192,33 @@ than of arithmetic. This is the same class of result the thread-level kernels
 reported in mage-003: the ratio between two builds is what identifies the limit
 when hardware counters are unavailable.
 
+### The autotuner disagreed, and was right
+
+`--tune` (built with `--features tune`) runs `cutile::tune` over the same powers
+of two: 36 candidates of `BM ∈ {16, 32, 64, 128} × BN ∈ {32, 64, 128} ×
+BK ∈ {8, 16, 32}`, each gated by one correctness launch, measured with the
+library's own device-event timing, and finished by a paired A/B runoff between
+the two finalists. It chose **32 × 128 × 32**, and its trial log is retained at
+[`results/mage-004/tuning/`](https://github.com/superposition/mage/tree/master/docs/assets/results/mage-004/tuning).
+
+The two searches optimized different things. The hand-picked sweep above measured
+the harness's *event span*, which includes the host submission path; the tuner
+measured *kernel time* alone. Cross-checked afterwards in one clean session with
+the harness, on the same inputs:
+
+| Tile | single-launch span | batched by ten |
+| --- | --- | --- |
+| 128 × 64 × 8 (hand-picked) | 189.44 | 174.90 |
+| **32 × 128 × 32 (tuner)** | **137.28** | **121.75** |
+
+The tuner's pick is faster in both views, so the hand-picked ladder — twelve
+configurations, chosen to trace a ratio rather than to search — simply missed
+the better region. The library's search found it in 17 seconds and 38 trials.
+
+**The binary now ships 32 × 128 × 32.** The two tables above were measured in
+the 00:05 session with 128 × 64 × 8 and are quoted as that session measured them;
+re-running the comparison with the tuned tile is listed under open items.
+
 ## What shaped the kernels
 
 Five compiler constraints are worth recording, because each is silent until the
@@ -232,9 +259,12 @@ hatch the plan anticipated, and it is why it was ported last.
 - LayerNorm's kernel time includes the 768 → 1024 row padding; a kernel with a
   native 768-wide tile would do less work.
 - Event spans are sensitive to device contention. A repeat of this comparison
-  that shared the GPU with another Nsight capture measured 3–20× larger spans
-  for the same binary; the retained run is the one taken with the device idle,
-  and it agrees with the earlier four-operation round to a few percent.
+  that shared the GPU with another Nsight capture measured 3–20× larger spans for
+  the same binary; the retained run is the one taken with the device idle, and it
+  agrees with the earlier four-operation round to a few percent. A second attempt
+  at 00:36 was discarded for the same reason, and the tell was not the tile
+  column: PyTorch's own matmul kernel rose from 44.04 to 65.21 µs, which no change
+  of mine can explain.
 - One capture per operation; kernel time carries no interval. Event spans come
   from three rounds with rotating order; the per-round spread lives in the
   `results.json` the reproduction command below writes.
@@ -248,11 +278,11 @@ hatch the plan anticipated, and it is why it was ported last.
 1. **Graphs for the other three kernels**: layer norm, triangle contraction and
    neighbor aggregation reject `--mode graph` today; each needs its own capture
    because a graph is recorded per launch shape.
-3. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
-   `cutile::tune` ships an experimental autotuner that would search it properly,
-   and the same question applies to the triangle and neighbor tiles, which were
-   never swept.
-4. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
+2. **Re-run the comparison with the tuned tile** (32 × 128 × 32) so the published
+   table and the shipped binary describe the same configuration, and sweep the
+   triangle and neighbor tiles too — neither was ever tuned, and the neighbor
+   kernel is the track's weakest result.
+3. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
 ## Reproduction
