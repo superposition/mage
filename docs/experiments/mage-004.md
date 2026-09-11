@@ -1,7 +1,6 @@
 # mage-004: cuTile Rust tile kernels
 
-Status: **all five operations ported and measured** (2026-09-10), except where
-noted for neighbor's kernel time.
+Status: **all five operations ported and measured** (2026-09-10).
 
 This round adds a third Rust-to-CUDA path to the comparison. The first two are
 in [mage-001](mage-001-comparison.md) (first cuda-oxide kernels) and
@@ -35,28 +34,35 @@ every measured launch, so compilation is outside the timed region.
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 58.50 | 93.88 | 216.64 | 82.6 |
-| Bias + GELU 4096×768 | 35.37 | 26.95 | 30.22 | 13.3 |
-| LayerNorm 4096×768 | 23.46 | 26.69 | 34.21 | 12.9 |
-| Triangle contraction 128×32 | 61.42 | 102.09 | 153.71 | 83.5 |
-| Neighbor aggregation 4096×64×65536 | 94.45 | 26.54 | 63.96 | 12.9 |
+| Matrix multiplication 1024³ | 52.99 | 91.92 | 218.50 | 82.6 |
+| Bias + GELU 4096×768 | 36.01 | 27.21 | 30.84 | 13.3 |
+| LayerNorm 4096×768 | 20.75 | 27.65 | 36.68 | 12.9 |
+| Triangle contraction 128×32 | 61.11 | 107.83 | 165.22 | 83.5 |
+| Neighbor aggregation 4096×64×65536 | 98.46 | 28.07 | 62.12 | 12.9 |
 
 ## GPU kernel time (µs per launch, single capture, 100 launches)
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 44.0 | 71.9 | 176.27 | 80.00 |
-| Bias + GELU 4096×768 | 15.8 | 7.6 | **8.09** | 11.0 |
-| LayerNorm 4096×768 | 11.2 | 8.0 | 10.66 | 10.05 |
-| Triangle contraction 128×32 | 28.5 | 81.6 | 120.58 | 80.1 |
-| Neighbor aggregation | 67.3 | 8.0 | not captured | 10.3 |
+| Matrix multiplication 1024³ | 44.04 | 83.61 | 172.52 | 80.00 |
+| Bias + GELU 4096×768 | 16.12 | 7.76 | **7.97** | 11.0 |
+| LayerNorm 4096×768 | 18.58 | 8.08 | 10.46 | 10.05 |
+| Triangle contraction 128×32 | 28.49 | 93.90 | 120.72 | 80.1 |
+| Neighbor aggregation 4096×64×65536 | 73.07 | 7.97 | 35.36 | 10.3 |
+
+Kernel time is summed over the launches one operation needs — PyTorch's bias +
+GELU is two kernels, its triangle contraction three and its neighbor
+aggregation four; every other cell is one. The launch counts come from
+`comparison-profiles.json`, not from a count of what the operation *should*
+launch.
 
 The two views disagree, and the disagreement is the result. On GPU time the tile
-kernels are **ahead of cuda-oxide on bias + GELU** (8.09 against 11.0 µs) and
-level with it on layer norm (10.66 against 10.05 µs), while trailing on the two
-matmul-shaped operations (2.2× and 1.5×). On event spans the tile kernels trail
-everywhere, including where their kernels are faster: bias + GELU spans 30.22 µs
-around a kernel that takes 8.09 µs.
+kernels are **ahead of cuda-oxide on bias + GELU** (7.97 against 11.0 µs) and
+level with it on layer norm (10.46 against 10.05 µs), while trailing on the
+other three: 2.2× on matrix multiply, 1.5× on triangle contraction and 3.4× on
+neighbor aggregation. On event spans the tile kernels trail everywhere,
+including where their kernels are faster: bias + GELU spans 30.84 µs around a
+kernel that takes 7.97 µs.
 
 That gap is the launch path, not the kernel. Each timed iteration here records
 an event, launches, records a second event and synchronizes; for a runtime whose
@@ -148,8 +154,6 @@ hatch the plan anticipated, and it is why it was ported last.
   pressure and memory traffic are inferred from ratios, not read.
 - LayerNorm's kernel time includes the 768 → 1024 row padding; a kernel with a
   native 768-wide tile would do less work.
-- Neighbor's kernel time has no capture yet: the device was busy with another
-  agent's profiling run when this round closed. Its event span is retained.
 - Event spans are sensitive to device contention. A repeat of this comparison
   that shared the GPU with another Nsight capture measured 3–20× larger spans
   for the same binary; the retained run is the one taken with the device idle,
@@ -171,8 +175,7 @@ hatch the plan anticipated, and it is why it was ported last.
    `cutile::tune` ships an experimental autotuner that would search it properly,
    and the same question applies to the triangle and neighbor tiles, which were
    never swept.
-3. **Neighbor's kernel time**, once the device is free.
-4. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
+3. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
 ## Reproduction

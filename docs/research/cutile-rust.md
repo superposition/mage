@@ -225,7 +225,6 @@ profiling commands next to the oxide ones.
 | --- | --- | --- |
 | The launch path | Not measured: the harness serializes submission per iteration, which prices the lazy runtime's host work rather than its queueing | Single launch, a batch divided by repetitions, and CUDA graph replay, with warmup excluded |
 | Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region; the triangle and neighbor tiles were never swept at all |
-| Neighbor kernel time | Event span retained, capture missing: the device was busy with another agent's profiling run | One Nsight Systems capture of 100 launches, device idle |
 | Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
 
 ## Where the results live
