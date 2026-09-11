@@ -59,6 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260910)
     parser.add_argument("--out", default="artifacts/mage-005-nsys")
+    parser.add_argument("--triton", action="store_true",
+                        help="also capture examples/oxide/triton_target.py on the same inputs")
+    parser.add_argument("--pytorch", action="store_true",
+                        help="also capture examples/oxide/python_target.py (cuBLAS) on the same inputs")
     parser.add_argument("--compare-params", default=None,
                         help="optional second generated configuration, captured as the {'new'} arm")
     args = parser.parse_args(argv)
@@ -85,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     arms = {"committed": None, "retained": "best"}
     if compare:
         arms["compare"] = "new"
+    if args.triton:
+        arms["triton"] = None
+    if args.pytorch:
+        arms["pytorch"] = None
     directories = {}
     for arm, variant in arms.items():
         directory = work / f"{args.op}-{arm}"
@@ -98,21 +106,29 @@ def main(argv: list[str] | None = None) -> int:
     hashes = {arm: {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                     for name in ("a.bin", "b.bin")}
               for arm, directory in directories.items()}
-    if hashes["committed"] != hashes["retained"]:
-        raise SystemExit("the two arms did not receive identical inputs")
+    if len({json.dumps(value, sort_keys=True) for value in hashes.values()}) != 1:
+        raise SystemExit("the arms did not receive identical inputs")
 
     rows = []
     for round_index in range(args.rounds):
-        order = ["committed", "retained"] if round_index % 2 == 0 else ["retained", "committed"]
-        if compare:
-            order = order + ["compare"] if round_index % 2 == 0 else ["compare"] + order
+        # Rotate the arms so each takes each position across the rounds; with two
+        # arms this is the alternation the earlier captures used.
+        names = list(arms)
+        offset = round_index % len(names)
+        order = names[offset:] + names[:offset]
         for arm in order:
+            scripts = {"triton": "triton_target.py", "pytorch": "python_target.py"}
+            if arm in scripts:
+                argv = [sys.executable,
+                        str(REPO_ROOT / "examples" / "oxide" / scripts[arm]),
+                        str(directories[arm]), "--iterations", str(args.iterations)]
+            else:
+                argv = [str(BINARY), str(directories[arm]),
+                        "--iterations", str(args.iterations), "--capture"]
             backend = NsysBackend(capture_range="cuda",
                                   output_dir=out / f"r{round_index + 1}" / arm)
             try:
-                metrics = list(backend.run_command(
-                    [str(BINARY), str(directories[arm]),
-                     "--iterations", str(args.iterations), "--capture"]))
+                metrics = list(backend.run_command(argv))
             finally:
                 backend.cleanup()
             total_us = sum(metric.duration_us for metric in metrics)
@@ -141,7 +157,11 @@ def main(argv: list[str] | None = None) -> int:
         "arms": {"committed": "src/main.rs kernels",
                  "retained": "generated variant, params " + render.params_json(params),
                  **({"compare": "generated variant, params " + render.params_json(compare)}
-                    if compare else {})},
+                    if compare else {}),
+                 **({"triton": "examples/oxide/triton_target.py, fixed tiles"}
+                    if args.triton else {}),
+                 **({"pytorch": "examples/oxide/python_target.py, library matmul"}
+                    if args.pytorch else {})},
         "input_hashes": hashes["committed"],
         "candidates_sha256": hashlib.sha256(CANDIDATES.read_bytes()).hexdigest(),
         "median_per_iteration_us": medians,

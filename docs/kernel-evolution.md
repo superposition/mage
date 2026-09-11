@@ -219,9 +219,24 @@ the retained arm, and the structural comparisons above reproduce inside single s
 The anomalous session is recorded here rather than dropped:
 `docs/assets/results/evolution-loop/kernel-time/`.
 
-Against the published baselines: cuBLAS at 44.03 µs is still ahead, and Triton's matmul
-kernel swings 71.94-83.78 µs between sessions, so no ranking follows from a single
-pairing. A same-session Triton capture is the outstanding measurement.
+### The same-session comparison
+
+Triton's published matmul value swings 71.94-83.78 µs between sessions, so a cross-session
+comparison says nothing. Capturing all four implementations in one session
+(`scripts/evolve_capture.py --triton --pytorch`, three interleaved rounds of 100 iterations):
+
+| implementation | rounds (µs/iter) | median |
+| --- | --- | ---: |
+| Rust, committed (`tiled_matmul_registers`) | 81.00, 79.24, 79.76 | 79.76 |
+| **Rust, retained (the loop's configuration)** | 76.34, 76.34, 75.95 | **76.34** |
+| Triton (`matrix_kernel`) | 88.95, 80.04, 84.51 | 84.51 |
+| PyTorch -> cuBLAS (`cutlass simt sgemm 128x64`) | 49.88, 43.51, 50.54 | 49.88 |
+
+Within this session the retained kernel is 0.957 of the committed one and was faster than
+Triton in every round, including against Triton's best round (79.9 against 76.3). cuBLAS is
+still 1.53x ahead, and it is the only arm whose own spread (43.5-50.5) rivals the
+differences being discussed, so its position should be re-measured before it is quoted as a
+target.
 
 ## LayerNorm: a null result
 
@@ -279,9 +294,14 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
 
 - Make the confirmation step use warm-up pairs and more rounds, so a run cannot quote a
   gain its own protocol inflated.
-- Capture Triton in the same session as the retained kernel. The published Triton matmul
-  value swings between 71.94 and 83.78 µs across sessions, so a cross-session comparison
-  says nothing; a same-session pairing is the only way to rank them.
+- Explain the interaction. Guarded staging with `k_step` 32 is 4.3% faster than the
+  committed kernel while either half alone is slower; the arms differ only in the guard
+  branches around the two staging blocks and in the pass count, so a counter capture
+  (issue slots, memory throughput, occupancy) should be able to say which resource the
+  combination buys.
+- Close the distance to cuBLAS (49.88 against 76.34 µs). The library kernel's own spread is
+  as wide as the gap being discussed, so pair the arms before quoting anything; the levers
+  not yet tried here are double-buffered global-to-shared loads and split-K.
 - Feed the loop the profiler's own output (Mage already captures Systems and Compute
   reports) so proposals can be diagnosis-driven rather than order-driven.
 - Let the proposer write structure, not just constants: the generated source is already

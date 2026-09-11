@@ -1,0 +1,130 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"guarded\",\"thread_tile\":[4,4],\"transpose_a\":true}",
+    "triton": "examples/oxide/triton_target.py, fixed tiles"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "099d1fecb3ec500cc122c18269dee5498a5e4566dd66aaa024b8068e19ea2dc8",
+  "median_per_iteration_us": {
+    "committed": 80.29507,
+    "retained": 76.63698000000001,
+    "triton": 85.09138999999999
+  },
+  "ratio_retained_over_committed": 0.9544419103190273,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8011.028,
+      "per_iteration_us": 80.11028,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7663.698,
+      "per_iteration_us": 76.63698000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8509.139,
+      "per_iteration_us": 85.09138999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r1/triton"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7677.046,
+      "per_iteration_us": 76.77046,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 7936.799,
+      "per_iteration_us": 79.36799,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r2/triton"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8029.507,
+      "per_iteration_us": 80.29507,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8653.585000000001,
+      "per_iteration_us": 86.53585000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r3/triton"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8037.029,
+      "per_iteration_us": 80.37029000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7660.043000000001,
+      "per_iteration_us": 76.60043,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-triton/r3/retained"
+    }
+  ]
+}
