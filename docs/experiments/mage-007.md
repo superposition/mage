@@ -1,3 +1,10 @@
+---
+title: What three kernel changes measured
+permalink: /experiments/mage-007/
+eyebrow: "Field note 007 / Mathematics on a GPU"
+description: Wide-row LayerNorm closed, neighbor aggregation halved its gap, and a GELU vectorization that measured 2.6x slower and was reverted, with each before-and-after pair taken in one session.
+math: true
+---
 # mage-007: what three kernel changes measured
 
 Status: **two improvements and one rejection**, measured 10 September 2026. This
