@@ -11,7 +11,7 @@ mesh_band: true
    weights="0.74,1,0.62,0.90"
    still="/assets/figures/mage-004/mesh-band.png"
    alt="A dark field with four soft spots of colour — blue, green, lavender and warm sand — scaled by how competitive each implementation is."
-   caption="The four spots are the four implementations in the table below, opacity set by the geometric mean of their kernel times relative to the best implementation on each operation: Triton brightest, cuTile Rust dimmest." %}**The claim.** Give a compiler the job of deciding how a GPU kernel places its data, and it will do
+   caption="The four spots are the four implementations, opacity set by how competitive each is." %}**The claim.** Give a compiler the job of deciding how a GPU kernel places its data, and it will do
 a good job where the reuse is low and a worse one where the reuse is high. On five FP32 operations,
 the [cuTile Rust](https://github.com/NVlabs/cutile-rs) tile kernels beat the hand-written ones on
 bias + GELU ($8.19\ \mu s$ against $11.0$), draw on layer normalization ($10.76$ against $10.05$),

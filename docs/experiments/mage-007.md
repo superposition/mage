@@ -11,7 +11,7 @@ mesh_band: true
    weights="1.34,1.37,0.38"
    still="/assets/figures/mage-007/mesh-band.png"
    alt="A dark field with three soft spots of colour — green, blue and muted red — the red one much dimmer than the other two."
-   caption="The three spots are this note's three changes, opacity set by the speed-up each measured: neighbour aggregation (1.34×, green), LayerNorm (1.37×, blue) and the rejected GELU variant (0.38×, red)." %}**The claim.** Making each thread load four values at once instead of one is a memory decision, not
+   caption="The three spots are this note's three changes, opacity set by the speed-up each measured." %}**The claim.** Making each thread load four values at once instead of one is a memory decision, not
 an optimisation: it cuts the number of load instructions by four and puts $4\times$ the bytes in
 flight per instruction. It pays when a kernel is short of instructions to issue. It costs when the
 grid already fills the machine and the only thing hiding memory latency is how many threads are
