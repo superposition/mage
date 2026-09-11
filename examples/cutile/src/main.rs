@@ -872,7 +872,13 @@ fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: 
     let (n, channels) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[n, n, channels])?)?;
     let b = read_f32(&dir.join("b.bin"), product(&[n, n, channels])?)?;
-    let tile = n.next_power_of_two().min(TRIANGLE_TILE);
+    // Overridable per run (, a power of two) so the tile
+    // can be swept without editing the source, the same way the matmul tile is.
+    let requested = std::env::var("CUTILE_TRIANGLE_TILE")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0 && value.is_power_of_two());
+    let tile = n.next_power_of_two().min(requested.unwrap_or(TRIANGLE_TILE));
     let n_pad = n.div_ceil(tile) * tile;
     let a_pad = pad_square(&a, n, channels, n_pad);
     let b_pad = pad_square(&b, n, channels, n_pad);

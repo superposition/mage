@@ -61,10 +61,10 @@ it:
 - **Scalar comparison is not a supported binary operator**; count the edges and
   loop over the count.
 
-`CUTILE_MATMUL_TILE=BM,BN,BK` selects a different matmul specialization; that is
-how the mage-004 tile sweep was taken. Tile shapes are part of the JIT
-specialization key, so each new shape compiles once at first launch, outside the
-timed region. The padded shape a run actually executed is recorded in
-`rust-timing.json`.
+`CUTILE_MATMUL_TILE=BM,BN,BK` and `CUTILE_TRIANGLE_TILE=N` select a different
+specialization, which is how the two sweeps in mage-004 were taken. Tile shapes
+are part of the JIT specialization key, so each new shape compiles once at first
+launch, outside the timed region. The padded shape a run actually executed is
+recorded in `rust-timing.json`.
 
 Licensed Apache-2.0, like the upstream project it builds on. See `LICENSE`.
