@@ -295,7 +295,10 @@ hatch the plan anticipated, and it is why it was ported last.
   that session; every comparison and launch-path table is from one later session
   with the tuned tile.
 - The cuda-oxide column is the third note's retained measurement, not taken in
-  the same session as these numbers.
+  the same session as these numbers; the kernel track has since published mage-006
+  (#58) with lower oxide numbers of its own (matrix multiply 68.62 µs of kernel
+  time) measured against its own Triton and PyTorch controls. The two Rust columns
+  should not be differenced across the two records.
 
 ## Open items
 

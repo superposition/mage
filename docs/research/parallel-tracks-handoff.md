@@ -52,11 +52,17 @@ Kernel time in microseconds, one Nsight Systems capture per operation and implem
 
 | Operation | cuda-oxide | Triton | PyTorch | cuTile |
 | --- | ---: | ---: | ---: | ---: |
-| Matrix multiplication 1024³ | **68.62** | 79.84 | 66.22 | 172.52 |
-| Bias + GELU 4096x768 | 11.02 | 7.76 | 16.12 | 7.97 |
-| LayerNorm 4096x768 | 8.97 | 8.07 | 11.25 | 10.46 |
-| Triangle contraction 128x32 | 80.83 | 100.45 | 28.57 | 165.22 |
-| Neighbor aggregation | 10.28 | 5.97 | 120.93 | 62.12 |
+| Matrix multiplication 1024³ | **68.62** | 79.84 | 66.22 | 131.56 |
+| Bias + GELU 4096x768 | 11.02 | 7.76 | 16.12 | 8.19 |
+| LayerNorm 4096x768 | 8.97 | 8.07 | 11.25 | 10.76 |
+| Triangle contraction 128x32 | 80.83 | 100.45 | 28.57 | 116.08 |
+| Neighbor aggregation | 10.28 | 5.97 | 120.93 | 35.37 |
+
+The cuTile column is mage-004's refreshed session (`#61`, the tile tuned to
+32x128x32); its earlier values in this table were 172.52 / 7.97 / 10.46 / 165.22 /
+62.12, and the last two of those were *event spans*, not kernel times. The cuTile
+column and the cuda-oxide column come from different sessions, so they should not
+be differenced against each other without re-measuring both in one run.
 
 Event spans (mean of 300 warmed samples, three rotating rounds, mage-006 namespace): matmul 74.09, GELU 13.96, LayerNorm 12.26, triangle 86.85, neighbor 15.88 for the cuda-oxide kernels, against Triton's 93.29 / 28.35 / 27.01 / 100.08 / 27.62.
 
