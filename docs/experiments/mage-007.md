@@ -1,19 +1,38 @@
 ---
-title: What three kernel changes measured
+title: Wider loads helped two kernels and hurt a third
 permalink: /experiments/mage-007/
 eyebrow: "Field note 007 / Mathematics on a GPU"
-description: Wide-row LayerNorm closed, neighbor aggregation halved its gap, and a GELU vectorization that measured 2.6x slower and was reverted, with each before-and-after pair taken in one session.
+description: The same treatment — more data per thread, loaded in one instruction — closed one gap and halved another, and then made a third kernel 2.6x slower. All three were measured the same way, and the replacement was reverted.
 math: true
 ---
-# mage-007: what three kernel changes measured
+The [previous note]({{ '/experiments/mage-006/' | relative_url }}) ended with the Rust kernels
+at 68.6 µs of GPU kernel time for the matrix multiply and 9.0 µs for layer normalization, and
+with three places where they were still behind. The worst was layer normalization **at wide
+rows**: at 4096×4096 it was 1.41× slower than Triton's kernel, because the shape fell back to
+an older kernel that handles one row at a time. Two more of the five operations, bias + GELU
+and neighbor aggregation, had never been touched since the first comparison.
 
-Status: **two improvements and one rejection**, measured 10 September 2026. This
-record belongs to the cuda-oxide kernel lane, which the cuTile track picked up when
-its agent exited; mage-006 stays as that agent left it.
+All three want the same kind of help. A thread that handles four values at once loads them
+with one instruction instead of four, and measures have shown that shape winning before: it is
+what took layer normalization from 18.6 µs to 11.0 µs, and what made the matrix multiply's
+shared reads cheap. So the natural next move was to widen what each thread handles in all
+three kernels and measure what happened.
 
-The lane's ranked gaps were wide-row LayerNorm, then GELU and neighbor aggregation.
-This round took all three: one closed, one halved, one rejected with its numbers
-kept.
+Two of the three got faster, and the third got much slower. **Neighbor aggregation** went from
+9.45 µs to 7.06 µs once each thread took a 128-bit quad of features and two edge gathers
+overlapped. **Layer normalization at wide rows** turned out not to need a rewrite at all: the
+two-warp kernel that serves narrower rows was already sound at 4096 and was simply excluded by
+a stale size limit, so removing the limit took it from 255.41 µs to 186.80 µs. And **bias +
+GELU**, given exactly the same treatment, measured 27.00 µs against the 10.29 µs it already
+had — 2.6× slower — and the change was reverted.
+
+That third result is the reason this note exists. Widening a thread's load is not a rule that
+transfers between kernels; it trades instruction count for occupancy, and it pays only when the
+kernel is short of instructions. The elementwise kernel already has enough threads to saturate
+the device, so giving each of them four times the work only removed parallelism.
+
+The gaps that remain are smaller: neighbor aggregation is 1.2× behind Triton, and bias + GELU
+is unchanged at 11.0 µs against Triton's 7.8.
 
 ## Method
 
@@ -30,6 +49,36 @@ drawn by `scripts/plot-kernel-lane-fixes.py` from
 [`docs/assets/results/mage-007/kernel-lane-fixes.json`](../assets/results/mage-007/kernel-lane-fixes.json).
 
 ## Values
+
+<div class="profile-comparison">
+<figure class="profile-plot">
+  <picture>
+    <source media="(max-width: 520px)" srcset="{{ '/assets/figures/mage-007/kernel-lane-fixes-mobile.svg' | relative_url }}">
+    <img src="{{ '/assets/figures/mage-007/kernel-lane-fixes.svg' | relative_url }}" width="740" height="620"
+         alt="Three rows of horizontal bars, GPU kernel time in microseconds, each row before and after one change. LayerNorm at 4096 by 4096: the single-warp kernel 255.41 becomes the two-warp kernel 186.80, with Triton at 181.59 for reference. Neighbor aggregation at 4096 by 64 by 65536: the scalar kernel 9.45 becomes the feature-quad kernel 7.06, with Triton at 5.97 for reference. Bias plus GELU at 4096 by 768: the scalar kernel stays at 10.29 and the feature-quad variant that measured 27.00, 2.6 times slower, was reverted, with Triton at 7.76 and cuTile Rust at 7.97 for reference.">
+  </picture>
+  <figcaption>
+    <p>GPU kernel time before and after each change, one Nsight Systems capture of 100 launches per bar, mean. Each before-and-after pair was measured in one session on an idle device; the Triton and cuTile bars are drawn hatched because they are quoted from their own sessions (mage-006 and mage-004) and are references, not pairings. Lower is better.</p>
+    <div class="profile-links">
+      <a href="{{ '/assets/figures/mage-007/kernel-lane-fixes.svg' | relative_url }}" download>Download SVG</a>
+      <a href="{{ '/assets/figures/mage-007/kernel-lane-fixes.png' | relative_url }}" download>PNG</a>
+      <a href="https://github.com/superposition/mage/blob/master/scripts/plot-kernel-lane-fixes.py">Script ↗</a>
+    </div>
+    <details class="profile-values">
+      <summary>Read the plotted values (µs of GPU kernel time)</summary>
+      <table>
+        <caption class="visually-hidden">GPU kernel time before and after each kernel-lane change</caption>
+        <thead><tr><th scope="col">Operation</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Reference</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">LayerNorm 4096×4096</th><td>255.41</td><td>186.80</td><td>Triton 181.59</td></tr>
+          <tr><th scope="row">Neighbor aggregation 4096×64×65536</th><td>9.45</td><td>7.06</td><td>Triton 5.97</td></tr>
+          <tr><th scope="row">Bias + GELU 4096×768</th><td>10.29 (kept)</td><td>27.00 (reverted)</td><td>Triton 7.76, cuTile 7.97</td></tr>
+        </tbody>
+      </table>
+    </details>
+  </figcaption>
+</figure>
+</div>
 
 Kernel time in microseconds, mean of 100 launches.
 
@@ -69,8 +118,8 @@ counterexample: "vectorize the elementwise kernel" is not a rule.
   kernel is inferred from traffic arithmetic, not measured.
 - One capture per point: a kernel time here carries no interval of its own.
 - The references are quoted from other sessions. A consolidated pass
-  (`scripts/evolve_capture.py --all`) is built for same-session comparisons and would
-  make these four arms one measurement whenever the lane wants it.
+  (`scripts/evolve_capture.py --all`) runs every implementation in one session, and
+  running it would make these four arms a single measurement.
 - The LayerNorm change is validated at 4096×4096, 4096×512, 3072×1024 and 2048×2048;
   widths above 4096 still fall back, and were not measured.
 - GELU's rejection is a single before/after pair, not a sweep: other vector widths
@@ -81,7 +130,18 @@ counterexample: "vectorize the elementwise kernel" is not a rule.
 ```bash
 source scripts/oxide-env.sh
 cd examples/oxide && CARGO_BUILD_JOBS=4 cargo oxide build --arch sm_89 && cd ../..
-# one operation, one capture
-.venv/bin/python -m mage profile-exec ... # see docs/profiling.md for the native workflow
+
+# inputs in the harness layout, at the shape under test
+.venv/bin/python -c "
+import sys; sys.path.insert(0, 'examples/oxide')
+import experiment
+from pathlib import Path
+experiment.generate(Path('artifacts/mage-007/layernorm-4096x4096'), 'layernorm', [4096, 4096],
+                    warmup=25, iterations=100)
+"
+
+# one operation, one capture; the kernel time is in the report's kernels.json
+.venv/bin/python -m mage profile-exec --backend nsys --capture-range cuda   --output-dir artifacts/mage-007/layernorm-4096x4096/nsys --   examples/oxide/target/release/mage-oxide artifacts/mage-007/layernorm-4096x4096   --iterations 100 --capture
+
 uv run --script scripts/plot-kernel-lane-fixes.py
 ```
