@@ -28,10 +28,13 @@ cd ../..
 Nsight Systems capture contains only the timed launches; `--iterations N`
 overrides the manifest count. `--mode single` (the default) awaits every launch
 and brackets it with one event pair; `--mode batch --batch N` queues N launches
-behind one event pair and divides, which separates the kernel from the host
-submission path. Each run retains its output and event samples in
-`rust-runs/<run-id>/`, with root files mirroring the latest run, and the timing
-record names the mode it was taken with.
+behind one event pair and divides; `--mode graph --batch N` captures N kernel
+nodes into one CUDA graph and replays it behind one event pair. Batch and graph
+separate the kernel from the host submission path — graph mode is implemented
+for `matmul` and `bias_gelu`, and the other three kernels reject it rather than
+report a number they did not measure. Each run retains its output and event
+samples in `rust-runs/<run-id>/`, with root files mirroring the latest run, and
+the timing record names the mode it was taken with.
 
 ## Kernels
 
