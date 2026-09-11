@@ -1,0 +1,200 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"pipeline\",\"thread_tile\":[4,4],\"transpose_a\":true}",
+    "triton": "examples/oxide/triton_target.py, fixed tiles",
+    "pytorch": "examples/oxide/python_target.py, library matmul",
+    "cutile": "examples/cutile (cuTile Rust, JIT at launch)"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "fd954bc51dae544da6edfc30ae4e56cf9b2320b46751e769ab3b53480491b5f6",
+  "median_per_iteration_us": {
+    "committed": 68.43188,
+    "retained": 67.48541999999999,
+    "triton": 79.60025999999999,
+    "pytorch": 48.444250000000004,
+    "cutile": 131.28726
+  },
+  "ratio_retained_over_committed": 0.9861693117301465,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6841.939,
+      "per_iteration_us": 68.41939,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 6747.4800000000005,
+      "per_iteration_us": 67.4748,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 7714.728,
+      "per_iteration_us": 77.14728,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r1/triton"
+    },
+    {
+      "round": 1,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 4405.377,
+      "per_iteration_us": 44.05377000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r1/pytorch"
+    },
+    {
+      "round": 1,
+      "arm": "cutile",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_entry"
+      ],
+      "total_us": 13130.412,
+      "per_iteration_us": 131.30412,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r1/cutile"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 6748.5419999999995,
+      "per_iteration_us": 67.48541999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 7960.026,
+      "per_iteration_us": 79.60025999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r2/triton"
+    },
+    {
+      "round": 2,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 5267.462,
+      "per_iteration_us": 52.674620000000004,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r2/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "cutile",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_entry"
+      ],
+      "total_us": 13114.607,
+      "per_iteration_us": 131.14607,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r2/cutile"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6854.979,
+      "per_iteration_us": 68.54979,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8010.947,
+      "per_iteration_us": 80.10947,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r3/triton"
+    },
+    {
+      "round": 3,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 4844.425,
+      "per_iteration_us": 48.444250000000004,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r3/pytorch"
+    },
+    {
+      "round": 3,
+      "arm": "cutile",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_entry"
+      ],
+      "total_us": 13128.726,
+      "per_iteration_us": 131.28726,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r3/cutile"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6843.188,
+      "per_iteration_us": 68.43188,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 6776.923,
+      "per_iteration_us": 67.76923,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-008-all-arms/r3/retained"
+    }
+  ]
+}
