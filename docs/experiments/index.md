@@ -26,5 +26,10 @@ A ratio between two register shapes separates shared-memory instructions from ar
 A tile compiler takes over the register tiles, the shared-memory layouts and the barriers. It wins one operation, matches another, and loses the two matmul-shaped ones — and most of the gap in the timing column turns out to be the launch path rather than the kernel. The library's own search also beat the hand-picked tile ladder.
 
 [Read the fourth investigation]({{ '/experiments/mage-004/' | relative_url }}).
+### 006 — The load in flight, and the shape Triton uses
+
+A matrix multiply that waits for its own tile loads can be given a second buffer and an asynchronous copy, so the next tile arrives while the current one is multiplied. A layer norm can be rearranged into the shape the other kernel already uses, read from its generated code. The second rewrite narrows the gap and does not close it.
+
+[Read the sixth investigation]({{ '/experiments/mage-006/' | relative_url }}).
 
 The code and detailed evidence are maintained [in GitHub](https://github.com/superposition/mage). The [Superposition journal](https://superposition.github.io/) follows the motivation behind the work.

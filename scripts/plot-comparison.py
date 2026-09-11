@@ -33,6 +33,7 @@ BASELINE = {
     "mage-002": "PyTorch and Triton baselines versus the rewritten cuda-oxide Rust kernels.",
     "mage-003": "PyTorch and Triton baselines versus the cuda-oxide Rust kernels after the shared-read and two-warp revisions.",
     "mage-004": "PyTorch and Triton baselines versus the cuTile Rust tile kernels.",
+    "mage-006": "PyTorch and Triton baselines versus the cuda-oxide Rust kernels after the cp.async matrix-multiply pipeline and the row-per-block layer norm.",
 }
 LABELS = {"matmul": "Matrix multiplication", "gelu": "Bias + GELU", "layernorm": "LayerNorm",
           "triangle": "Triangle contraction", "neighbor": "Neighbor aggregation"}
