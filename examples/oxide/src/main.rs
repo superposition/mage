@@ -327,6 +327,78 @@ mod kernels {
         }
     }
 
+
+    /// Neighbor aggregation with a 128-bit feature quad per thread and the edge
+    /// walk unrolled by two, so two independent gathers are in flight.
+    ///
+    /// The scalar kernel gives each thread one feature and a serial edge loop,
+    /// which leaves one load in flight per thread. The quad form issues 128-bit
+    /// loads, and the two-way unroll breaks the accumulation dependency so the
+    /// second edge's gather overlaps the first.
+    #[kernel]
+    pub fn neighbor_quads(
+        width: u32,
+        x: &[f32],
+        weights: &[f32],
+        rowptr: &[u32],
+        indices: &[u32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+        let index = thread::index_1d();
+        let quad = index.get();
+        let w = width as usize;
+        let quads_per_row = w / 4;
+        let row = quad / quads_per_row;
+        let col = (quad % quads_per_row) * 4;
+        let mut acc = [0.0f32; 4];
+        let mut acc_b = [0.0f32; 4];
+        let mut edge = rowptr[row] as usize;
+        let end = rowptr[row + 1] as usize;
+        while edge + 2 <= end {
+            let src_a = indices[edge] as usize * w + col;
+            let src_b = indices[edge + 1] as usize * w + col;
+            let weight_a = weights[edge];
+            let weight_b = weights[edge + 1];
+            if let Some(xa) = vector::as_vectors::<F32x4>(&x[src_a..src_a + 4]) {
+                let v = xa[0].as_slice();
+                acc[0] += weight_a * v[0];
+                acc[1] += weight_a * v[1];
+                acc[2] += weight_a * v[2];
+                acc[3] += weight_a * v[3];
+            }
+            if let Some(xb) = vector::as_vectors::<F32x4>(&x[src_b..src_b + 4]) {
+                let v = xb[0].as_slice();
+                acc_b[0] += weight_b * v[0];
+                acc_b[1] += weight_b * v[1];
+                acc_b[2] += weight_b * v[2];
+                acc_b[3] += weight_b * v[3];
+            }
+            edge += 2;
+        }
+        while edge < end {
+            let src = indices[edge] as usize * w + col;
+            let weight = weights[edge];
+            if let Some(xa) = vector::as_vectors::<F32x4>(&x[src..src + 4]) {
+                let v = xa[0].as_slice();
+                acc[0] += weight * v[0];
+                acc[1] += weight * v[1];
+                acc[2] += weight * v[2];
+                acc[3] += weight * v[3];
+            }
+            edge += 1;
+        }
+        let out_ptr = out.as_mut_ptr();
+        let dst = row * w + col;
+        let mut lane = 0usize;
+        while lane < 4 {
+            unsafe {
+                *out_ptr.add(dst + lane) = acc[lane] + acc_b[lane];
+            }
+            lane += 1;
+        }
+    }
+
     #[kernel]
     pub fn layer_norm(
         width: u32,
@@ -1067,7 +1139,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "gelu" => "bias_gelu",
         "triangle" => "triangle",
-        _ => "neighbor",
+        _ => {
+            if dims[1] % 4 == 0 {
+                "neighbor_quads"
+            } else {
+                "neighbor"
+            }
+        }
     };
     let linear = LaunchConfig {
         grid_dim: ((out_len as u32).div_ceil(256), 1, 1),
@@ -1271,16 +1349,37 @@ fn run() -> Result<(), Box<dyn Error>> {
                     &b_dev,
                     &mut out,
                 ),
-                "neighbor" => module.neighbor(
-                    &stream,
-                    linear,
-                    dims[1] as u32,
-                    &a_dev,
-                    &b_dev,
-                    &ptr_dev,
-                    &idx_dev,
-                    &mut out,
-                ),
+                "neighbor" => {
+                    if committed_kernel == "neighbor_quads" {
+                        // One thread per feature quad, so a quarter of the blocks.
+                        let quads = (out_len / 4) as u32;
+                        module.neighbor_quads(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (quads.div_ceil(256), 1, 1),
+                                block_dim: (256, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            dims[1] as u32,
+                            &a_dev,
+                            &b_dev,
+                            &ptr_dev,
+                            &idx_dev,
+                            &mut out,
+                        )
+                    } else {
+                        module.neighbor(
+                            &stream,
+                            linear,
+                            dims[1] as u32,
+                            &a_dev,
+                            &b_dev,
+                            &ptr_dev,
+                            &idx_dev,
+                            &mut out,
+                        )
+                    }
+                }
                 _ => unreachable!(),
             }
         }
