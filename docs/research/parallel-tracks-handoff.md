@@ -145,7 +145,7 @@ Kernel time in microseconds, one Nsight Systems capture per operation and implem
 | Bias + GELU 4096x768 | 11.02 | 7.76 | 16.12 | 8.19 |
 | LayerNorm 4096x768 | 8.97 | 8.07 | 11.25 | 10.76 |
 | Triangle contraction 128x32 | 80.83 | 100.45 | 28.57 | 116.08 |
-| Neighbor aggregation | 10.28 | 5.97 | 120.93 | 35.37 |
+| Neighbor aggregation | 7.06 | 5.97 | 120.93 | 35.37 |
 
 The cuTile column is mage-004's refreshed session (`#61`, the tile tuned to
 32x128x32); its earlier values in this table were 172.52 / 7.97 / 10.46 / 165.22 /
@@ -165,7 +165,15 @@ Event spans (mean of 300 warmed samples, three rotating rounds, mage-006 namespa
    1.37× faster and 2.9% off the 181.59 µs Triton reference. Worst full-output error
    4.77e-07 on 4096×4096, 4096×512, 3072×1024 and 2048×2048.
 2. **LayerNorm at the harness shape is shape-specific, not structural** (issue #54). 4096x768 is 7-10% behind Triton, but at 8192x768 with the same width the kernel is 26% *ahead*. The wide-row fix above may or may not move this; the remaining hypotheses are in the issue.
-3. **Bias + GELU and neighbor aggregation were never optimised** (issue #59). They are the mage-001 kernels: 11.02 against Triton's 7.76 and cuTile's 7.97, and 10.28 against Triton's 5.97. Both are elementwise or reduction shaped, so the treatment that took LayerNorm from 18.64 to 8.97 should apply.
+3. **Neighbor aggregation halved its gap; bias + GELU is what remains** (issue #59).
+   Neighbor now takes 7.06 µs against Triton's 5.97 (#71: one 128-bit feature quad
+   per thread, edge walk unrolled by two, 9.45 → 7.06 µs in one session; the kernel
+   is L2-bound on the gathered rows, so more edges in flight is the next lever —
+   1.7× behind became 1.2×). Bias + GELU is unchanged at 11.02 against Triton's
+   7.76 and cuTile's 7.97, and the LayerNorm treatment does **not** transfer: four
+   features per thread measured 27.00 µs against the scalar kernel's 10.29 µs, a
+   2.6× regression that was reverted. One element per thread wins on that shape;
+   the remaining hypotheses are occupancy and the bias re-read per element.
 4. **Matmul leads Triton** but not the library: 68.62 against cuBLAS 66.22 in the same session, and 44.03-66.22 across sessions. Split-K is the untried lever; re-arranging the pipeline is not — the loop searched that neighbourhood and found it flat (0.1-0.3% across the knobs that used to matter, `k_step` 32 confirmed).
 
 ## Environment
