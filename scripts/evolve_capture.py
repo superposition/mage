@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import importlib.util
 import json
 import shutil
@@ -29,6 +30,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CANDIDATES = REPO_ROOT / "examples" / "oxide" / "src" / "candidates.rs"
 BINARY = REPO_ROOT / "examples" / "oxide" / "target" / "release" / "mage-oxide"
+CUTILE_BINARY = REPO_ROOT / "examples" / "cutile" / "target" / "release" / "mage-cutile"
+# cuTile JIT-compiles at launch and needs the CUDA 13.3 tree for `tileiras`; the
+# oxide toolchain pins 13.0, so the two environments must not share a shell. Only
+# this arm gets these variables, for the duration of its own run.
+CUTILE_ENV = {
+    "CUDA_TOOLKIT_PATH": "/usr/local/cuda-13.3",
+    "CUTILE_TILEIRAS_PATH": "/usr/local/cuda-13.3/bin/tileiras",
+}
 BUILD_COMMAND = ("source scripts/oxide-env.sh && cd examples/oxide && "
                  "CARGO_BUILD_JOBS=2 cargo oxide build --arch sm_89")
 DEFAULT_SHAPES = {"matmul": (1024, 1024, 1024), "layernorm": (4096, 768)}
@@ -48,6 +57,33 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from mage.profiler.backends import NsysBackend  # noqa: E402
 
 
+def capture_arm(arm: str, directory: Path, iterations: int, output: Path):
+    """Capture one arm, giving it its own environment when it needs one."""
+    scripts = {"triton": "triton_target.py", "pytorch": "python_target.py"}
+    if arm in scripts:
+        argv = [sys.executable, str(REPO_ROOT / "examples" / "oxide" / scripts[arm]),
+                str(directory), "--iterations", str(iterations)]
+    elif arm == "cutile":
+        argv = [str(CUTILE_BINARY), str(directory), "--iterations", str(iterations), "--capture"]
+    else:
+        argv = [str(BINARY), str(directory), "--iterations", str(iterations), "--capture"]
+    saved = {}
+    if arm == "cutile":
+        for key, value in CUTILE_ENV.items():
+            saved[key] = os.environ.get(key)
+            os.environ[key] = value
+    backend = NsysBackend(capture_range="cuda", output_dir=output)
+    try:
+        return list(backend.run_command(argv))
+    finally:
+        backend.cleanup()
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--params", required=True,
@@ -64,9 +100,17 @@ def main(argv: list[str] | None = None) -> int:
                         help="also capture examples/oxide/triton_target.py on the same inputs")
     parser.add_argument("--pytorch", action="store_true",
                         help="also capture examples/oxide/python_target.py (cuBLAS) on the same inputs")
+    parser.add_argument("--cutile", action="store_true",
+                        help="also capture examples/cutile (cuTile Rust) on the same inputs")
+    parser.add_argument("--all", action="store_true",
+                        help="shorthand for --triton --pytorch --cutile")
+    parser.add_argument("--warmup-passes", type=int, default=1,
+                        help="unrecorded pass over every arm before the measured rounds")
     parser.add_argument("--compare-params", default=None,
                         help="optional second generated configuration, captured as the {'new'} arm")
     args = parser.parse_args(argv)
+    if args.all:
+        args.triton = args.pytorch = args.cutile = True
 
     shape = ([int(part) for part in args.shape.split(",")] if args.shape
              else list(DEFAULT_SHAPES[args.op]))
@@ -102,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
         arms["triton"] = None
     if args.pytorch:
         arms["pytorch"] = None
+    if args.cutile:
+        if not CUTILE_BINARY.is_file():
+            raise SystemExit(
+                f"setup failure: missing {CUTILE_BINARY} "
+                "(source scripts/cutile-env.sh && cd examples/cutile && cargo build --release)")
+        arms["cutile"] = None
     directories = {}
     for arm, variant in arms.items():
         directory = work / f"{args.op}-{arm}"
@@ -118,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     if len({json.dumps(value, sort_keys=True) for value in hashes.values()}) != 1:
         raise SystemExit("the arms did not receive identical inputs")
 
+    # One unrecorded pass over every arm first: the cuTile arm JIT-compiles at launch
+    # and every arm pays a cold clock, neither of which belongs in a comparison.
+    for _ in range(args.warmup_passes):
+        for arm in arms:
+            capture_arm(arm, directories[arm], args.iterations, out / "warmup" / arm)
+            print("warm-up     %-9s (not recorded)" % arm, flush=True)
+
     rows = []
     for round_index in range(args.rounds):
         # Rotate the arms so each takes each position across the rounds; with two
@@ -126,20 +183,8 @@ def main(argv: list[str] | None = None) -> int:
         offset = round_index % len(names)
         order = names[offset:] + names[:offset]
         for arm in order:
-            scripts = {"triton": "triton_target.py", "pytorch": "python_target.py"}
-            if arm in scripts:
-                argv = [sys.executable,
-                        str(REPO_ROOT / "examples" / "oxide" / scripts[arm]),
-                        str(directories[arm]), "--iterations", str(args.iterations)]
-            else:
-                argv = [str(BINARY), str(directories[arm]),
-                        "--iterations", str(args.iterations), "--capture"]
-            backend = NsysBackend(capture_range="cuda",
-                                  output_dir=out / f"r{round_index + 1}" / arm)
-            try:
-                metrics = list(backend.run_command(argv))
-            finally:
-                backend.cleanup()
+            metrics = capture_arm(arm, directories[arm], args.iterations,
+                                  out / f"r{round_index + 1}" / arm)
             total_us = sum(metric.duration_us for metric in metrics)
             row = {"round": round_index + 1, "arm": arm, "launches": len(metrics),
                    "kernel_names": sorted({metric.kernel_name for metric in metrics}),
@@ -170,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
                  **({"triton": "examples/oxide/triton_target.py, fixed tiles"}
                     if args.triton else {}),
                  **({"pytorch": "examples/oxide/python_target.py, library matmul"}
-                    if args.pytorch else {})},
+                    if args.pytorch else {}),
+                 **({"cutile": "examples/cutile (cuTile Rust, JIT at launch)"}
+                    if args.cutile else {})},
         "input_hashes": hashes["committed"],
         "candidates_sha256": hashlib.sha256(CANDIDATES.read_bytes()).hexdigest(),
         "median_per_iteration_us": medians,

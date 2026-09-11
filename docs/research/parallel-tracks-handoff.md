@@ -88,6 +88,52 @@ axis not yet in the space. Everything else that is left needs structure the temp
 express — split-K for the matmul gap to the library, and the block-per-row register-held shape
 (PR #52) for wide-row LayerNorm.
 
+## One measurement pass
+
+Every implementation now lives in one checkout: `examples/oxide` (cuda-oxide Rust),
+`examples/cutile` (cuTile Rust), `examples/oxide/{triton_target,python_target}.py` (Triton and
+PyTorch) and the variants the loop renders into `examples/oxide/src/candidates.rs`.
+`scripts/evolve_capture.py` prices all of them in a single session:
+
+```
+# one checkout, every implementation, one session, arms rotating
+.venv/bin/python scripts/evolve_capture.py --op matmul --all \
+  --params '{"staging": "pipeline", "k_step": 32, "quad_stage": true, "block": [64, 64], "transpose_a": true, "thread_tile": [4, 4]}' \
+  --rounds 3 --iterations 100 --out artifacts/mage-008-all-arms
+```
+
+Measured that way at 1024³ FP32, GPU kernel microseconds per iteration, medians of three
+rotating rounds after one unrecorded pass over every arm:
+
+| Arm | Median µs | Note |
+| --- | ---: | --- |
+| cuda-oxide, committed (`tiled_matmul_pipeline`) | 68.43 | |
+| cuda-oxide, generated (the loop's variant) | 67.49 | 0.986 of committed |
+| Triton | 79.60 | control that landed in band |
+| PyTorch → cuBLAS | 48.44 | control that landed in band |
+| cuTile Rust | 131.29 | reproduces mage-004's 131.56 |
+
+Each arm carries its own environment. The cuTile arm needs the CUDA 13.3 tree for `tileiras`
+while the oxide toolchain pins 13.0, and `scripts/cutile-env.sh` and `scripts/oxide-env.sh`
+must not share a shell; the tool sets the cuTile variables for that arm's run only. The cuTile
+binary JIT-compiles at launch, which is why the pass opens with one unrecorded round per arm.
+
+**Arms are sequential, not concurrent.** One GPU cannot time two kernels at once, so what
+consolidation buys is coverage in one session under one rotating order, not simultaneity. A
+number measured in another session — or while another track is measuring — is not comparable,
+whatever its control says.
+
+Builds stay separate because their shells are separate:
+
+```
+source scripts/oxide-env.sh  && cd examples/oxide  && CARGO_BUILD_JOBS=2 cargo oxide build --arch sm_89
+source scripts/cutile-env.sh && cd examples/cutile && cargo build --release
+```
+
+Consolidation means a track's worktree is where its *code* changes, not where its *numbers*
+come from: measurements are taken from one checkout with every arm present, so a comparison
+never spans sessions.
+
 ## Current numbers
 
 Kernel time in microseconds, one Nsight Systems capture per operation and implementation, 100 iterations. Sources: mage-006 for the cuda-oxide column, mage-004 for cuTile, both with Triton and PyTorch measured in the same session.
@@ -127,6 +173,14 @@ Event spans (mean of 300 warmed samples, three rotating rounds, mage-006 namespa
 | Mage CLI | `/home/superposition/.local/bin/mage`; `profile-exec ... -- <binary> <args>` for native, `profile <script> -- <args>` for scripts |
 | Profilers | Nsight Systems 2025.3.2 with `CuptiUseRawGpuTimestamps=false`; Nsight Compute counters blocked by `ERR_NVGPUCTRPERM` |
 | Figures | `uv run --script scripts/plot-comparison.py --experiment <namespace>`; `scripts/plot-kernel-progression.py` carries the per-kernel stage history |
+
+## Ownership after the first round
+
+The kernel track's agent exited on 2026-09-11, so the cuda-oxide lane — the committed kernels
+in `examples/oxide/src/main.rs`, the `committed_kernel` dispatch and the mage-006 record — has
+no owner. The measurement harness (`scripts/evolve_capture.py`) is shared infrastructure and
+should be changed by whoever is measuring; the loop's own surface (`scripts/evolve*.py`,
+`tests/test_evolution.py`) stays with the loop track.
 
 ## Rules written down after they were learned the hard way
 
