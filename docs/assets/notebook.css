@@ -168,7 +168,7 @@ mjx-container[display] { overflow-x: auto; overflow-y: hidden; padding-block: 8p
     radial-gradient(90% 130% at 52% 92%, rgba(147, 202, 255, .16), transparent 58%),
     var(--paper);
 }
-.mesh-band canvas { display: block; width: 100%; height: auto; aspect-ratio: 740 / 220; opacity: 0; transition: opacity .7s ease; }
+.mesh-band canvas { display: block; width: 100%; height: auto; aspect-ratio: 740 / 220; max-height: 170px; opacity: 0; transition: opacity .7s ease; }
 .mesh-band[data-ready] canvas { opacity: 1; }
 .mesh-band noscript img { display: block; width: 100%; height: auto; }
 .mesh-band figcaption { padding: 10px 14px 12px; border-top: 1px solid var(--rule); background: var(--surface); font-size: 12px; line-height: 1.7; color: var(--muted); }

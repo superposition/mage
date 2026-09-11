@@ -30,6 +30,8 @@ uniform float u_grainMixer;
 uniform float u_grainOverlay;
 uniform float u_intensity;
 uniform float u_opacityGain;
+uniform float u_saturation;
+uniform vec2 u_pointer;
 
 in vec2 v_objectUV;
 out vec4 fragColor;
@@ -105,7 +107,8 @@ void main() {
   for (int i = 0; i < 10; i++) {
     if (i >= int(u_colorsCount)) break;
 
-    vec2 pos = getPosition(i, t) + mixerGrain;
+    // The field leans toward the pointer: the nearer spot leads, the far ones trail.
+    vec2 pos = getPosition(i, t) + mixerGrain + u_pointer * (0.18 / (1.0 + float(i)));
     vec3 colorFraction = u_colors[i].rgb * u_colors[i].a;
     float opacityFraction = u_colors[i].a;
 
@@ -126,6 +129,11 @@ void main() {
   // #101217 backdrop that reads as white. These two knobs scale the result.
   color *= u_intensity;
   opacity *= u_opacityGain;
+
+  // Paper's shader averages the spots, which on a page of two or three colours
+  // drags everything toward grey. Push the result back away from its own luma so
+  // the band reads as colour rather than as a wash.
+  color = mix(vec3(dot(color, vec3(0.2126, 0.7152, 0.0722))), color, u_saturation);
 
   if (u_grainOverlay > 0.) {
     float grainOverlay = valueNoise(rotate(grainUV, 1.) + vec2(3.));
@@ -254,6 +262,8 @@ void main() {
       grainOverlay: gl.getUniformLocation(prog, "u_grainOverlay"),
       intensity: gl.getUniformLocation(prog, "u_intensity"),
       opacityGain: gl.getUniformLocation(prog, "u_opacityGain"),
+      saturation: gl.getUniformLocation(prog, "u_saturation"),
+      pointer: gl.getUniformLocation(prog, "u_pointer"),
     };
 
     gl.uniform4fv(u.colors, spots);
@@ -262,11 +272,17 @@ void main() {
     gl.uniform1f(u.swirl, Number(band.dataset.swirl ?? 0.55));
     gl.uniform1f(u.grainMixer, Number(band.dataset.grainMixer ?? 0.05));
     gl.uniform1f(u.grainOverlay, Number(band.dataset.grainOverlay ?? 0.04));
-    gl.uniform1f(u.intensity, Number(band.dataset.intensity ?? 0.8));
-    gl.uniform1f(u.opacityGain, Number(band.dataset.opacity ?? 0.6));
+    gl.uniform1f(u.intensity, Number(band.dataset.intensity ?? 0.5));
+    gl.uniform1f(u.opacityGain, Number(band.dataset.opacity ?? 0.85));
+    gl.uniform1f(u.saturation, Number(band.dataset.saturation ?? 2.9));
+    gl.uniform2f(u.pointer, 0, 0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(...BACKDROP);
+
+    // Pointer state: a direction the spots lean toward, eased into and out of.
+    const pointer = [0, 0];
+    const pointerTarget = [0, 0];
 
     function resize() {
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -283,6 +299,10 @@ void main() {
 
     function frame(seconds) {
       resize();
+      // The pointer pulls the field, then the field settles back on its own.
+      pointer[0] += (pointerTarget[0] - pointer[0]) * 0.07;
+      pointer[1] += (pointerTarget[1] - pointer[1]) * 0.07;
+      gl.uniform2f(u.pointer, pointer[0], pointer[1]);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform1f(u.time, seconds);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -333,6 +353,22 @@ void main() {
     window.addEventListener("resize", () => {
       if (reduced.matches) frame(0);
     });
+
+    // A mouse leans the field; lifts of the pointer let it settle back. Touch is
+    // left alone so the band never competes with scrolling.
+    if (!reduced.matches) {
+      band.addEventListener("pointermove", (event) => {
+        if (event.pointerType && event.pointerType !== "mouse") return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        pointerTarget[0] = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
+        pointerTarget[1] = -((event.clientY - rect.top) / rect.height - 0.5) * 2;
+      });
+      band.addEventListener("pointerleave", () => {
+        pointerTarget[0] = 0;
+        pointerTarget[1] = 0;
+      });
+    }
   }
 
   function boot() {
