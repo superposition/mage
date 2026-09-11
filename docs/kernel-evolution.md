@@ -238,6 +238,30 @@ still 1.53x ahead, and it is the only arm whose own spread (43.5-50.5) rivals th
 differences being discussed, so its position should be re-measured before it is quoted as a
 target.
 
+### The hand-written pipeline arrived, and it is faster
+
+A double-buffered `cp.async` matmul (`tiled_matmul_pipeline`, PR #49) landed in the
+committed kernels after this branch was opened; the host selects it for this shape. Captured
+against it in one session, three interleaved rounds of 100 iterations:
+
+| implementation | rounds (µs/iter) | median |
+| --- | --- | ---: |
+| Rust, committed (`tiled_matmul_pipeline`) | 69.02, 68.76, 68.44 | **68.76** |
+| Rust, the loop's configuration | 77.09, 76.25, 76.09 | 76.25 |
+| Triton | 79.32, 86.22, 86.50 | 86.22 |
+| PyTorch -> cuBLAS | 49.26, 50.50, 56.03 | 50.50 |
+
+The pipeline is 11% faster than the configuration the loop retained (68.76 against 76.25)
+and 13.8% faster than the kernel it replaced (79.76 µs in the session above). **On this
+shape the loop's result is superseded.** What survives is the diagnosis it produced: the
+difference between two structures whose copies are issued the same way in different orders
+pointed at the staging latency, and the pipelined kernel is what that points at. Two
+consecutive issues made the same point — a library-style overlap of the global-to-shared
+copies was worth more than any further rearrangement of the tiles.
+
+The generated space has no `cp.async` form, so the loop cannot yet be asked to tune inside
+the pipelined structure; that is the first thing to add.
+
 ## LayerNorm: a null result
 
 The same loop on layer normalization (`--op layernorm`, starting from the committed
@@ -299,9 +323,12 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
   branches around the two staging blocks and in the pass count, so a counter capture
   (issue slots, memory throughput, occupancy) should be able to say which resource the
   combination buys.
-- Close the distance to cuBLAS (49.88 against 76.34 µs). The library kernel's own spread is
-  as wide as the gap being discussed, so pair the arms before quoting anything; the levers
-  not yet tried here are double-buffered global-to-shared loads and split-K.
+- Add a `cp.async` staging form to the generated templates, so the loop can search inside
+  the pipelined structure (buffer count, step depth, copy widths) instead of only the
+  synchronous one.
+- Close the distance to cuBLAS (50.50 against 68.76 µs for the pipelined kernel). The
+  library kernel's own spread is as wide as some of the gaps being discussed, so pair the
+  arms before quoting; split-K is the lever not yet tried here.
 - Feed the loop the profiler's own output (Mage already captures Systems and Compute
   reports) so proposals can be diagnosis-driven rather than order-driven.
 - Let the proposer write structure, not just constants: the generated source is already

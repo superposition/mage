@@ -1,0 +1,165 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"guarded\",\"thread_tile\":[4,4],\"transpose_a\":true}",
+    "triton": "examples/oxide/triton_target.py, fixed tiles",
+    "pytorch": "examples/oxide/python_target.py, library matmul"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "099d1fecb3ec500cc122c18269dee5498a5e4566dd66aaa024b8068e19ea2dc8",
+  "median_per_iteration_us": {
+    "committed": 68.75638,
+    "retained": 76.25444999999999,
+    "triton": 86.21897000000001,
+    "pytorch": 50.50308
+  },
+  "ratio_retained_over_committed": 1.1090527162715664,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6901.547,
+      "per_iteration_us": 69.01547,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7708.909,
+      "per_iteration_us": 77.08909,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 7932.034,
+      "per_iteration_us": 79.32034,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r1/triton"
+    },
+    {
+      "round": 1,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 4926.111,
+      "per_iteration_us": 49.26111,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r1/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7625.445,
+      "per_iteration_us": 76.25444999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8621.897,
+      "per_iteration_us": 86.21897000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r2/triton"
+    },
+    {
+      "round": 2,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 5050.308,
+      "per_iteration_us": 50.50308,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r2/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6875.638,
+      "per_iteration_us": 68.75638,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8649.957,
+      "per_iteration_us": 86.49957,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r3/triton"
+    },
+    {
+      "round": 3,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 5602.486,
+      "per_iteration_us": 56.02486,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r3/pytorch"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_pipeline"
+      ],
+      "total_us": 6844.202,
+      "per_iteration_us": 68.44202,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7608.951,
+      "per_iteration_us": 76.08951,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-cpasync/r3/retained"
+    }
+  ]
+}
