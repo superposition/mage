@@ -1,0 +1,327 @@
+{
+  "accepted": 3,
+  "best_median_us": 78.70400324463844,
+  "candidates_sha256": "f841ef8f87624eb384dae02d44b65b3c7945066b9ccbef96482d1ec8bbf9d1d1",
+  "committed_median_us": 82.2880007326603,
+  "confirmation": [
+    {
+      "best_mean_us": 78.48373179634412,
+      "best_median_us": 78.60800251364708,
+      "best_run_id": "1789077083076599147-38818",
+      "committed_mean_us": 82.53973176081975,
+      "committed_median_us": 82.67199993133545,
+      "committed_run_id": "1789077082969525791-38812",
+      "incumbent_mean_us": 78.48373179634412,
+      "incumbent_median_us": 78.60800251364708,
+      "incumbent_variant": "best",
+      "order": [
+        "committed",
+        "best"
+      ],
+      "round": 1
+    },
+    {
+      "best_mean_us": 78.55573110282421,
+      "best_median_us": 78.70400324463844,
+      "best_run_id": "1789077083184076614-38824",
+      "committed_mean_us": 82.42079839110374,
+      "committed_median_us": 82.04799890518188,
+      "committed_run_id": "1789077083294322509-38830",
+      "incumbent_mean_us": 78.55573110282421,
+      "incumbent_median_us": 78.70400324463844,
+      "incumbent_variant": "best",
+      "order": [
+        "best",
+        "committed"
+      ],
+      "round": 2
+    },
+    {
+      "best_mean_us": 78.61013188958168,
+      "best_median_us": 78.75199988484383,
+      "best_run_id": "1789077083402476159-38836",
+      "committed_mean_us": 82.45546519756317,
+      "committed_median_us": 82.2880007326603,
+      "committed_run_id": "1789077083510514181-38842",
+      "incumbent_mean_us": 78.61013188958168,
+      "incumbent_median_us": 78.75199988484383,
+      "incumbent_variant": "best",
+      "order": [
+        "best",
+        "committed"
+      ],
+      "round": 3
+    }
+  ],
+  "control_drift_tolerance": 0.03,
+  "final_best_params": {
+    "block": [
+      64,
+      64
+    ],
+    "k_step": 32,
+    "quad_stage": true,
+    "staging": "guarded",
+    "thread_tile": [
+      4,
+      4
+    ],
+    "transpose_a": true
+  },
+  "generations_run": 12,
+  "improvement_vs_committed": 0.043554314798164184,
+  "improvement_vs_start": 0.3430822560044994,
+  "incumbent_variant": "best",
+  "inputs": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "iterations": 60,
+  "knob_payoffs": [
+    {
+      "acceptances": 1,
+      "knob": "transpose_a",
+      "last_gain": 0.22222222913196332,
+      "payoff": 0.22222222913196332
+    },
+    {
+      "acceptances": 1,
+      "knob": "quad_stage",
+      "last_gain": 0.08791211602833471,
+      "payoff": 0.08791211602833471
+    },
+    {
+      "acceptances": 1,
+      "knob": "k_step",
+      "last_gain": 0.07643069216360943,
+      "payoff": 0.07643069216360943
+    },
+    {
+      "acceptances": 0,
+      "knob": "block",
+      "last_gain": null,
+      "payoff": 0.0
+    },
+    {
+      "acceptances": 0,
+      "knob": "staging",
+      "last_gain": null,
+      "payoff": 0.0
+    },
+    {
+      "acceptances": 0,
+      "knob": "thread_tile",
+      "last_gain": null,
+      "payoff": 0.0
+    }
+  ],
+  "last_build_ok": true,
+  "min_gain": 0.01,
+  "noisy_generations": [],
+  "op": "matmul",
+  "rejected": 9,
+  "rejected_variants": [
+    {
+      "changed_knob": "transpose_a",
+      "generation": 3,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 64,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": false
+      },
+      "reason": "gain -26.51% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "transpose_a",
+      "generation": 5,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 32,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": false
+      },
+      "reason": "gain -4.15% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "quad_stage",
+      "generation": 6,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 32,
+        "quad_stage": false,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -10.77% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "k_step",
+      "generation": 7,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 16,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -5.54% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "k_step",
+      "generation": 8,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 128,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "67584 B of static shared memory exceeds the 46080 B budget"
+    },
+    {
+      "changed_knob": "block",
+      "generation": 9,
+      "params": {
+        "block": [
+          128,
+          64
+        ],
+        "k_step": 32,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -6.79% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "block",
+      "generation": 10,
+      "params": {
+        "block": [
+          64,
+          128
+        ],
+        "k_step": 32,
+        "quad_stage": true,
+        "staging": "guarded",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -8.37% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "staging",
+      "generation": 11,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 32,
+        "quad_stage": true,
+        "staging": "exact",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -7.03% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "staging",
+      "generation": 12,
+      "params": {
+        "block": [
+          64,
+          64
+        ],
+        "k_step": 32,
+        "quad_stage": true,
+        "staging": "exact",
+        "thread_tile": [
+          4,
+          4
+        ],
+        "transpose_a": true
+      },
+      "reason": "gain -7.55% does not clear the 1.00% threshold"
+    }
+  ],
+  "repo_revision": "94e583c8d1ebd1c878c4329a31fda7ba4cb4d3a4",
+  "rounds_measured": 99,
+  "run_id": "matmul-loop-demo",
+  "seed": 20260910,
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "start_median_us": 119.80800330638885,
+  "start_params": {
+    "block": [
+      64,
+      64
+    ],
+    "k_step": 64,
+    "quad_stage": false,
+    "staging": "guarded",
+    "thread_tile": [
+      4,
+      4
+    ],
+    "transpose_a": false
+  },
+  "stopped_after": "8 consecutive rejections",
+  "templates": {
+    "examples/oxide/src/candidates.rs.tmpl": "060f578439bedd5e3426fa7968b957e7848634a76d66e09e1b6895c5e6e2c489",
+    "examples/oxide/src/candidates_body.rs.tmpl": "fddf505d2d547cc46a844ee73e21f9fcd1b823c10f002df5c392dc9a1c49a059"
+  },
+  "utc": "2026-09-10T21:51:23Z",
+  "warmup": 10
+}

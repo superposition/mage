@@ -484,6 +484,10 @@ mod kernels {
     }
 }
 
+// Rendered per measurement by scripts/evolve.py. `include!` keeps the
+// `#[cuda_module]` body inline, which the macro requires of a module.
+include!("candidates.rs");
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -491,6 +495,9 @@ struct Manifest {
     dims: Vec<usize>,
     warmup: usize,
     iterations: usize,
+    /// `best` or `new` runs a generated variant; absent runs the committed kernels.
+    #[serde(default)]
+    variant: Option<String>,
 }
 fn read_f32(path: &Path, count: usize) -> Result<Vec<f32>, Box<dyn Error>> {
     let bytes = fs::read(path)?;
@@ -562,6 +569,119 @@ impl Drop for Capture {
         if self.active {
             let _ = self.stop();
         }
+    }
+}
+
+/// Which generated role a run asked for: the loop's incumbent or its proposal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CandidateRole {
+    Best,
+    New,
+}
+
+impl CandidateRole {
+    fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
+        match value {
+            "best" => Ok(Self::Best),
+            "new" => Ok(Self::New),
+            other => Err(format!("unknown variant {other:?}; expected \"best\" or \"new\"").into()),
+        }
+    }
+}
+
+/// A generated variant together with the launch geometry baked into its render.
+enum CandidateLaunch {
+    Matmul {
+        role: CandidateRole,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+    },
+    Layernorm {
+        role: CandidateRole,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+    },
+}
+
+impl CandidateLaunch {
+    fn geometry(&self) -> ((u32, u32, u32), (u32, u32, u32)) {
+        match *self {
+            CandidateLaunch::Matmul {
+                grid_dim, block_dim, ..
+            }
+            | CandidateLaunch::Layernorm {
+                grid_dim, block_dim, ..
+            } => (grid_dim, block_dim),
+        }
+    }
+}
+
+/// Resolve the generated variant's launch geometry, rejecting a shape its tile
+/// does not divide. A generated variant is shape-specialised on purpose: falling
+/// back to a different kernel would make the measurement describe something the
+/// manifest did not ask for.
+fn resolve_candidate(
+    op: &str,
+    dims: &[usize],
+    role: CandidateRole,
+) -> Result<CandidateLaunch, Box<dyn Error>> {
+    match op {
+        "matmul" => {
+            let (block_m, block_n, k_step) = match role {
+                CandidateRole::Best => candidates::MATMUL_TILE_BEST,
+                CandidateRole::New => candidates::MATMUL_TILE_NEW,
+            };
+            let (threads_x, threads_y) = match role {
+                CandidateRole::Best => candidates::MATMUL_BLOCK_BEST,
+                CandidateRole::New => candidates::MATMUL_BLOCK_NEW,
+            };
+            let (m, n, k) = (dims[0], dims[1], dims[2]);
+            if block_m == 0
+                || block_n == 0
+                || k_step == 0
+                || m % block_m as usize != 0
+                || n % block_n as usize != 0
+                || k % k_step as usize != 0
+            {
+                return Err(format!(
+                    "generated variant: shape [{m}, {n}, {k}] is not a multiple of the \
+                     {block_m}x{block_n} tile with k step {k_step}"
+                )
+                .into());
+            }
+            Ok(CandidateLaunch::Matmul {
+                role,
+                grid_dim: (n as u32 / block_n, m as u32 / block_m, 1),
+                block_dim: (threads_x, threads_y, 1),
+            })
+        }
+        "layernorm" => {
+            let (rows_per_block, threads) = match role {
+                CandidateRole::Best => candidates::LAYERNORM_CFG_BEST,
+                CandidateRole::New => candidates::LAYERNORM_CFG_NEW,
+            };
+            let (rows, width) = (dims[0], dims[1]);
+            if rows_per_block == 0
+                || threads == 0
+                || rows % rows_per_block as usize != 0
+                || width % 4 != 0
+            {
+                return Err(format!(
+                    "generated variant: shape [{rows}, {width}] needs rows divisible by \
+                     {rows_per_block} and width divisible by 4"
+                )
+                .into());
+            }
+            Ok(CandidateLaunch::Layernorm {
+                role,
+                grid_dim: (rows as u32 / rows_per_block, 1, 1),
+                block_dim: (threads, 1, 1),
+            })
+        }
+        other => Err(format!(
+            "generated variants exist for matmul and layernorm, not {other:?}"
+        )
+        .into()),
     }
 }
 
@@ -646,6 +766,45 @@ fn run() -> Result<(), Box<dyn Error>> {
     let idx_dev = DeviceBuffer::from_host(&stream, &indices)?;
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, out_len)?;
     let module = kernels::load(&ctx)?;
+    let candidate_role = match manifest.variant.as_deref() {
+        Some(value) => Some(CandidateRole::parse(value)?),
+        None => None,
+    };
+    let candidate_module = match candidate_role {
+        Some(_) => Some(candidates::load(&ctx)?),
+        None => None,
+    };
+    let candidate_launch = match candidate_role {
+        Some(role) => Some(resolve_candidate(&manifest.op, dims, role)?),
+        None => None,
+    };
+    // Which committed kernel this shape selects is decided once: both the launch
+    // below and the timing record read this, so they cannot disagree.
+    let committed_kernel = match manifest.op.as_str() {
+        "matmul" => {
+            if dims[0] % 64 == 0 && dims[1] % 64 == 0 && dims[2] % 64 == 0 {
+                "tiled_matmul_registers"
+            } else {
+                "tiled_matmul"
+            }
+        }
+        "layernorm" => {
+            let width = dims[1];
+            // The two-warp split shares a row by whole 32-lane steps, so it is only
+            // sound when each warp's span is a multiple of 32; narrower rows would
+            // count part of the row twice and take the single-warp kernel instead.
+            if width % 4 == 0 && width <= 2048 && (width as usize).div_ceil(8) % 32 == 0 {
+                "layer_norm_pair"
+            } else if width % 4 == 0 {
+                "layer_norm_warp"
+            } else {
+                "layer_norm"
+            }
+        }
+        "gelu" => "bias_gelu",
+        "triangle" => "triangle",
+        _ => "neighbor",
+    };
     let linear = LaunchConfig {
         grid_dim: ((out_len as u32).div_ceil(256), 1, 1),
         block_dim: (256, 1, 1),
@@ -655,10 +814,73 @@ fn run() -> Result<(), Box<dyn Error>> {
         // SAFETY: inputs and CSR bounds were validated before device allocation;
         // each kernel receives the required launch shape and distinct output.
         unsafe {
+            if let (Some(candidate_module), Some(plan)) =
+                (candidate_module.as_ref(), candidate_launch.as_ref())
+            {
+                let (grid_dim, block_dim) = plan.geometry();
+                let config = LaunchConfig {
+                    grid_dim,
+                    block_dim,
+                    shared_mem_bytes: 0,
+                };
+                let width = dims[1] as u32;
+                return match plan {
+                    CandidateLaunch::Matmul {
+                        role: CandidateRole::Best,
+                        ..
+                    } => candidate_module.matmul_best(
+                        &stream,
+                        config,
+                        width,
+                        dims[2] as u32,
+                        &a_dev,
+                        &b_dev,
+                        cuda_host::RowWidth::new(&mut out, width),
+                    ),
+                    CandidateLaunch::Matmul {
+                        role: CandidateRole::New,
+                        ..
+                    } => candidate_module.matmul_new(
+                        &stream,
+                        config,
+                        width,
+                        dims[2] as u32,
+                        &a_dev,
+                        &b_dev,
+                        cuda_host::RowWidth::new(&mut out, width),
+                    ),
+                    CandidateLaunch::Layernorm {
+                        role: CandidateRole::Best,
+                        ..
+                    } => candidate_module.layernorm_best(
+                        &stream,
+                        config,
+                        width,
+                        dims[0] as u32,
+                        &a_dev,
+                        &b_dev,
+                        &c_dev,
+                        &mut out,
+                    ),
+                    CandidateLaunch::Layernorm {
+                        role: CandidateRole::New,
+                        ..
+                    } => candidate_module.layernorm_new(
+                        &stream,
+                        config,
+                        width,
+                        dims[0] as u32,
+                        &a_dev,
+                        &b_dev,
+                        &c_dev,
+                        &mut out,
+                    ),
+                };
+            }
             match manifest.op.as_str() {
-                "matmul" => {
-                    let (m, n, k) = (dims[0], dims[1], dims[2]);
-                    if m % 64 == 0 && n % 64 == 0 && k % 64 == 0 {
+                "matmul" => match committed_kernel {
+                    "tiled_matmul_registers" => {
+                        let (m, n, k) = (dims[0], dims[1], dims[2]);
                         // Square 64x64 tiles, no edge masking needed.
                         module.tiled_matmul_registers(
                             &stream,
@@ -673,42 +895,35 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             cuda_host::RowWidth::new(&mut out, n as u32),
                         )
-                    } else {
-                        module.tiled_matmul(
-                            &stream,
-                            LaunchConfig {
-                                grid_dim: (
-                                    (dims[1] as u32).div_ceil(16),
-                                    (dims[0] as u32).div_ceil(16),
-                                    1,
-                                ),
-                                block_dim: (16, 16, 1),
-                                shared_mem_bytes: 0,
-                            },
-                            dims[0] as u32,
-                            dims[1] as u32,
-                            dims[2] as u32,
-                            &a_dev,
-                            &b_dev,
-                            cuda_host::RowWidth::new(&mut out, dims[1] as u32),
-                        )
                     }
-                }
+                    _ => module.tiled_matmul(
+                        &stream,
+                        LaunchConfig {
+                            grid_dim: (
+                                (dims[1] as u32).div_ceil(16),
+                                (dims[0] as u32).div_ceil(16),
+                                1,
+                            ),
+                            block_dim: (16, 16, 1),
+                            shared_mem_bytes: 0,
+                        },
+                        dims[0] as u32,
+                        dims[1] as u32,
+                        dims[2] as u32,
+                        &a_dev,
+                        &b_dev,
+                        cuda_host::RowWidth::new(&mut out, dims[1] as u32),
+                    ),
+                },
                 "gelu" => {
                     module.bias_gelu(&stream, linear, dims[1] as u32, &a_dev, &b_dev, &mut out)
                 }
                 "layernorm" => {
                     let rows = dims[0] as u32;
                     let width = dims[1] as u32;
-                    // Eight rows per block, one warp each.
-                    let block = LaunchConfig {
-                        grid_dim: (rows.div_ceil(8), 1, 1),
-                        block_dim: (256, 1, 1),
-                        shared_mem_bytes: 0,
-                    };
-                    if width % 4 == 0 && width <= 2048 {
+                    match committed_kernel {
                         // Two warps per row: 1024 blocks instead of 512, so more warps stay resident.
-                        module.layer_norm_pair(
+                        "layer_norm_pair" => module.layer_norm_pair(
                             &stream,
                             LaunchConfig {
                                 grid_dim: (rows.div_ceil(4), 1, 1),
@@ -721,14 +936,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             &c_dev,
                             &mut out,
-                        )
-                    } else if width % 4 == 0 {
-                        module.layer_norm_warp(
-                            &stream, block, width, rows,
-                            &a_dev, &b_dev, &c_dev, &mut out,
-                        )
-                    } else {
-                        module.layer_norm(
+                        ),
+                        // Eight rows per block, one warp each.
+                        "layer_norm_warp" => module.layer_norm_warp(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (rows.div_ceil(8), 1, 1),
+                                block_dim: (256, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            width,
+                            rows,
+                            &a_dev,
+                            &b_dev,
+                            &c_dev,
+                            &mut out,
+                        ),
+                        _ => module.layer_norm(
                             &stream,
                             LaunchConfig {
                                 grid_dim: (rows, 1, 1),
@@ -740,7 +964,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             &b_dev,
                             &c_dev,
                             &mut out,
-                        )
+                        ),
                     }
                 }
                 "triangle" => module.triangle(
@@ -799,10 +1023,30 @@ fn run() -> Result<(), Box<dyn Error>> {
     let output_bytes: Vec<u8> = result.iter().flat_map(|v| v.to_le_bytes()).collect();
     fs::write(run_dir.join("output.bin"), &output_bytes)?;
     fs::write(dir.join("rust-output.bin"), &output_bytes)?;
+    // Provenance: a timing record has to say which kernel produced it, including
+    // which committed kernel the shape selected when no variant was requested.
+    let variant = manifest
+        .variant
+        .clone()
+        .unwrap_or_else(|| "committed".to_string());
+    let (variant_kernel, variant_params) = match (candidate_role, manifest.op.as_str()) {
+        (Some(CandidateRole::Best), "matmul") => {
+            ("matmul_best", candidates::BEST_MATMUL_PARAMS_JSON)
+        }
+        (Some(CandidateRole::New), "matmul") => ("matmul_new", candidates::NEW_MATMUL_PARAMS_JSON),
+        (Some(CandidateRole::Best), _) => {
+            ("layernorm_best", candidates::BEST_LAYERNORM_PARAMS_JSON)
+        }
+        (Some(CandidateRole::New), _) => {
+            ("layernorm_new", candidates::NEW_LAYERNORM_PARAMS_JSON)
+        }
+        (None, _) => (committed_kernel, ""),
+    };
     let timing = serde_json::json!({"op": manifest.op, "dims": dims, "warmup": manifest.warmup,
         "iterations": manifest.iterations, "capture": capture_requested, "samples_us": samples,
         "event_mean_us": samples.iter().sum::<f64>() / samples.len() as f64,
-        "precision": "FP32 scalar arithmetic; no tensor cores", "run_id": run_id});
+        "precision": "FP32 scalar arithmetic; no tensor cores", "run_id": run_id,
+        "variant": variant, "variant_kernel": variant_kernel, "variant_params": variant_params});
     fs::write(
         run_dir.join("timing.json"),
         serde_json::to_string_pretty(&timing)? + "\n",

@@ -1,0 +1,148 @@
+{
+  "accepted": 0,
+  "best_median_us": 12.35199999064207,
+  "candidates_sha256": "8fcc88ab8b9c263e80626496a208ca3ee3ecc34420812d055ad4a751be973250",
+  "committed_median_us": 12.28800043463707,
+  "confirmation": [
+    {
+      "best_mean_us": 12.59360023153325,
+      "best_median_us": 12.28800043463707,
+      "best_run_id": "1789077192879774660-40151",
+      "committed_mean_us": 12.56853349817296,
+      "committed_median_us": 12.28800043463707,
+      "committed_run_id": "1789077192756517584-40145",
+      "incumbent_mean_us": 12.59360023153325,
+      "incumbent_median_us": 12.28800043463707,
+      "incumbent_variant": "best",
+      "order": [
+        "committed",
+        "best"
+      ],
+      "round": 1
+    },
+    {
+      "best_mean_us": 12.722666809956232,
+      "best_median_us": 12.35199999064207,
+      "best_run_id": "1789077193000749756-40157",
+      "committed_mean_us": 12.600533586616317,
+      "committed_median_us": 12.28800043463707,
+      "committed_run_id": "1789077193119103966-40163",
+      "incumbent_mean_us": 12.722666809956232,
+      "incumbent_median_us": 12.35199999064207,
+      "incumbent_variant": "best",
+      "order": [
+        "best",
+        "committed"
+      ],
+      "round": 2
+    },
+    {
+      "best_mean_us": 12.762133466700712,
+      "best_median_us": 12.927999719977379,
+      "best_run_id": "1789077193233762355-40169",
+      "committed_mean_us": 12.86773351021111,
+      "committed_median_us": 12.368000112473965,
+      "committed_run_id": "1789077193348390310-40175",
+      "incumbent_mean_us": 12.762133466700712,
+      "incumbent_median_us": 12.927999719977379,
+      "incumbent_variant": "best",
+      "order": [
+        "best",
+        "committed"
+      ],
+      "round": 3
+    }
+  ],
+  "control_drift_tolerance": 0.03,
+  "final_best_params": {
+    "threads": 256,
+    "warps_per_row": 2
+  },
+  "generations_run": 4,
+  "improvement_vs_committed": -0.005208297016705998,
+  "improvement_vs_start": -0.005208297016705998,
+  "incumbent_variant": "best",
+  "inputs": {
+    "a.bin": "b89c38621e7d6e9ac33414086c3c69b15b6e4ffd4607341836ee8ff8bdaca747",
+    "b.bin": "da01bb733ecc6b034ccc7daff509debc4132a1645a782cd86fefca49ab713200",
+    "c.bin": "688eea93b64e36739488b08a0195e7a40ce9321ce97cd6709ac80daa9f0df110"
+  },
+  "iterations": 60,
+  "knob_payoffs": [
+    {
+      "acceptances": 0,
+      "knob": "warps_per_row",
+      "last_gain": null,
+      "payoff": 0.0
+    },
+    {
+      "acceptances": 0,
+      "knob": "threads",
+      "last_gain": null,
+      "payoff": 0.0
+    }
+  ],
+  "last_build_ok": true,
+  "min_gain": 0.01,
+  "noisy_generations": [],
+  "op": "layernorm",
+  "rejected": 4,
+  "rejected_variants": [
+    {
+      "changed_knob": "warps_per_row",
+      "generation": 1,
+      "params": {
+        "threads": 256,
+        "warps_per_row": 1
+      },
+      "reason": "gain -5.21% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "warps_per_row",
+      "generation": 2,
+      "params": {
+        "threads": 256,
+        "warps_per_row": 4
+      },
+      "reason": "gain +0.00% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "threads",
+      "generation": 3,
+      "params": {
+        "threads": 128,
+        "warps_per_row": 2
+      },
+      "reason": "gain +0.52% does not clear the 1.00% threshold"
+    },
+    {
+      "changed_knob": "threads",
+      "generation": 4,
+      "params": {
+        "threads": 512,
+        "warps_per_row": 2
+      },
+      "reason": "gain -8.33% does not clear the 1.00% threshold"
+    }
+  ],
+  "repo_revision": "d3de01d7d0bd544398ce51e0dfa64967f8fbab5b",
+  "rounds_measured": 36,
+  "run_id": "layernorm-loop-demo",
+  "seed": 20260910,
+  "shape": [
+    4096,
+    768
+  ],
+  "start_median_us": 12.28800043463707,
+  "start_params": {
+    "threads": 256,
+    "warps_per_row": 2
+  },
+  "stopped_after": "all knobs exhausted under the current incumbent",
+  "templates": {
+    "examples/oxide/src/candidates.rs.tmpl": "060f578439bedd5e3426fa7968b957e7848634a76d66e09e1b6895c5e6e2c489",
+    "examples/oxide/src/candidates_body.rs.tmpl": "fddf505d2d547cc46a844ee73e21f9fcd1b823c10f002df5c392dc9a1c49a059"
+  },
+  "utc": "2026-09-10T21:53:13Z",
+  "warmup": 10
+}
