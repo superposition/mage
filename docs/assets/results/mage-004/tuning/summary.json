@@ -1,0 +1,16 @@
+{
+  "best": {
+    "BK": 32,
+    "BM": 32,
+    "BN": 128
+  },
+  "budget_secs": 180,
+  "candidates": 36,
+  "dims": [
+    1024,
+    1024,
+    1024
+  ],
+  "op": "matmul",
+  "trials": 38
+}

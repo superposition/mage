@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import triton
 
-from experiment import DEFAULTS, generate, measure, precision, reference
+from experiment import DEFAULTS, generate, measure, precision, reference, resolve_implementation, source_hashes
 from triton_target import implementation
 
 
@@ -29,20 +29,25 @@ def run(args):
     precision()
     args.output.mkdir(parents=True, exist_ok=False)
     sources = Path(__file__).resolve().parent
+    entry = resolve_implementation(args.implementation)
+    binary = (args.binary or entry["binary"]).resolve()
     data = {
-        "experiment_id": "mage-001-comparison", "utc": datetime.now(timezone.utc).isoformat(),
+        "experiment_id": f"{args.experiment}-comparison", "utc": datetime.now(timezone.utc).isoformat(),
         "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__, "triton": triton.__version__,
         "cuda": torch.version.cuda, "python": platform.python_version(), "platform": platform.platform(),
         "precision": "FP32; PyTorch TF32 disabled; Triton dot input_precision=ieee",
         "timing": "CUDA-event span per operation; resident inputs; includes possible host submission gaps",
         "excluded": ["compilation", "input transfers", "Rust process startup", "end-to-end service work"],
         "rounds": args.rounds, "iterations_per_round": args.iterations, "warmup_per_round": args.warmup,
-        "source_sha256": {name: hashlib.sha256((sources / name).read_bytes()).hexdigest()
-                          for name in ("comparison.py", "triton_target.py", "experiment.py", "src/main.rs", "Cargo.lock")},
-        "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
+        "implementation": args.implementation, "upstream": entry["upstream"],
+        "source_sha256": {**{name: hashlib.sha256((sources / name).read_bytes()).hexdigest()
+                             for name in ("comparison.py", "triton_target.py", "experiment.py")},
+                          **source_hashes(entry["source"])},
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "gpu_state_before": gpu_state(), "results": [],
     }
-    for op, dims in DEFAULTS.items():
+    selected = {op: dims for op, dims in DEFAULTS.items() if not args.ops or op in args.ops}
+    for op, dims in selected.items():
         directory = args.output / op
         generate(directory, op, dims, warmup=args.warmup, iterations=args.iterations)
         _, python_fn = reference(directory)
@@ -58,7 +63,7 @@ def run(args):
             for language in order:
                 torch.cuda.synchronize()
                 if language == "rust":
-                    result = subprocess.run([str(args.binary), str(directory)], text=True, capture_output=True)
+                    result = subprocess.run([str(binary), str(directory)], text=True, capture_output=True)
                     (directory / f"rust-round-{round_index}.log").write_text(result.stdout + result.stderr)
                     result.check_returncode()
                     actual = np.fromfile(directory / "rust-output.bin", dtype="<f4").reshape(expected.shape)
@@ -82,15 +87,20 @@ def run(args):
 
 
 if __name__ == "__main__":
+    from experiment import IMPLEMENTATIONS
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path(__file__).parent / "target/release/mage-oxide")
+    parser.add_argument("--implementation", choices=sorted(IMPLEMENTATIONS), default="oxide",
+                        help="which native implementation to compare against PyTorch and Triton")
+    parser.add_argument("--binary", type=Path, help="override the implementation's binary path")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--experiment", default="mage-001", help="result namespace in results.json")
+    parser.add_argument("--ops", nargs="+", choices=sorted(DEFAULTS), help="restrict the run to these operations")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=25)
     args = parser.parse_args()
     if args.rounds < 1 or not 1 <= args.iterations <= 100000 or not 0 <= args.warmup <= 10000:
         parser.error("positive rounds, 1..100000 iterations, and 0..10000 warmup iterations required")
-    args.binary = args.binary.resolve()
     args.output = args.output.resolve()
     run(args)

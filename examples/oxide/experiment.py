@@ -20,6 +20,45 @@ DEFAULTS = {"matmul": [1024, 1024, 1024], "gelu": [4096, 768],
 SMALL = {"matmul": [17, 19, 23], "gelu": [3, 257], "layernorm": [3, 257],
          "triangle": [7, 5], "neighbor": [7, 9, 23]}
 
+EXAMPLES = Path(__file__).resolve().parent.parent
+
+# Native implementations this harness drives. They share the input files, the
+# binary CLI and the result layout, so a run names the implementation it used
+# rather than assuming one.
+IMPLEMENTATIONS = {
+    "oxide": {
+        "binary": EXAMPLES / "oxide/target/release/mage-oxide",
+        "source": EXAMPLES / "oxide",
+        "upstream": "cuda-oxide @26754ae52c26c097dc1c465a1e42c4c5d05a3d40",
+    },
+    "cutile": {
+        "binary": EXAMPLES / "cutile/target/release/mage-cutile",
+        "source": EXAMPLES / "cutile",
+        "upstream": "cutile 0.3.1 (crates.io)",
+    },
+}
+
+
+def resolve_implementation(name):
+    if name not in IMPLEMENTATIONS:
+        raise SystemExit(f"unknown implementation {name!r}; expected one of {', '.join(IMPLEMENTATIONS)}")
+    return IMPLEMENTATIONS[name]
+
+
+def toolchain(source):
+    """The pinned toolchain channel a native implementation builds with."""
+    for line in (source / "rust-toolchain.toml").read_text().splitlines():
+        if line.startswith("channel"):
+            return line.split("=", 1)[1].strip().strip('"')
+    return "unknown"
+
+
+def source_hashes(source):
+    files = {"src/main.rs": source / "src/main.rs",
+             "Cargo.lock": source / "Cargo.lock",
+             "experiment.py": Path(__file__)}
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()}
+
 
 def precision():
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -117,15 +156,25 @@ def validate(directory):
     return result
 
 
-def run_suite(binary, output, small=False):
+def run_suite(binary, output, small=False, implementation="oxide", experiment_id="mage-001", ops=None):
     precision()
-    cases = [(op, dims, False, op) for op, dims in (SMALL if small else DEFAULTS).items()]
+    selected = SMALL if small else DEFAULTS
+    if ops:
+        unknown = sorted(set(ops) - set(DEFAULTS))
+        if unknown:
+            raise SystemExit(f"unknown operations {', '.join(unknown)}; expected some of {', '.join(DEFAULTS)}")
+        selected = {op: dims for op, dims in selected.items() if op in ops}
+    cases = [(op, dims, False, op) for op, dims in selected.items()]
     if small:
         cases += [("layernorm", [2, 1], True, "layernorm-constant-one"),
                   ("layernorm", [4, 768], True, "layernorm-constant"),
                   ("neighbor", [7, 9, 0], False, "neighbor-no-edges"),
                   ("neighbor", [1, 5, 9], False, "neighbor-duplicates"),
                   ("matmul", [1, 1, 1], False, "matmul-one")]
+    if ops:
+        # The small-case extras are added after the filter, so an operation that
+        # was not asked for would otherwise still run.
+        cases = [case for case in cases if case[0] in ops]
     results = []
     for op, dims, constant, name in cases:
         directory = output / name
@@ -145,27 +194,36 @@ def run_suite(binary, output, small=False):
                         "input_hashes": json.loads((directory / "inputs.sha256.json").read_text())})
         print(json.dumps({k: v for k, v in results[-1].items() if k not in
                           {"rust_samples_us", "python_samples_us", "input_hashes"}}), flush=True)
-    metadata = {"experiment_id": "mage-001", "utc": datetime.now(timezone.utc).isoformat(),
+    entry = resolve_implementation(implementation)
+    metadata = {"experiment_id": experiment_id, "utc": datetime.now(timezone.utc).isoformat(),
         "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__, "cuda": torch.version.cuda,
         "python": platform.python_version(), "platform": platform.platform(),
-        "oxide_revision": "26754ae52c26c097dc1c465a1e42c4c5d05a3d40",
-        "rust_toolchain": "nightly-2026-08-28", "architecture": "sm_89",
-        "source_sha256": {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
-                          for name in ("src/main.rs", "experiment.py", "Cargo.lock")},
+        "implementation": implementation, "upstream": entry["upstream"],
+        "rust_toolchain": toolchain(entry["source"]), "architecture": "sm_89",
+        "source_sha256": source_hashes(entry["source"]),
         "gpu_state": subprocess.check_output(["nvidia-smi", "--query-gpu=driver_version,pstate,temperature.gpu,clocks.sm,clocks.mem", "--format=csv"], text=True).strip(),
         "timing": "CUDA events, inputs resident on device; host submission may affect short kernels",
         "results": results}
+    if implementation == "oxide":
+        # Published mage-001..003 records carry this field; keep it for them.
+        metadata["oxide_revision"] = "26754ae52c26c097dc1c465a1e42c4c5d05a3d40"
     (output / "results.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return metadata
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path(__file__).parent / "target/release/mage-oxide")
+    parser.add_argument("--implementation", choices=sorted(IMPLEMENTATIONS), default="oxide",
+                        help="which native implementation to run")
+    parser.add_argument("--binary", type=Path, help="override the implementation's binary path")
     parser.add_argument("--output", type=Path, default=Path("artifacts/mage-001"))
+    parser.add_argument("--experiment", default="mage-001", help="result namespace in results.json")
+    parser.add_argument("--ops", nargs="+", choices=sorted(DEFAULTS), help="restrict the run to these operations")
     parser.add_argument("--small", action="store_true")
     args = parser.parse_args()
-    run_suite(args.binary.resolve(), args.output.resolve(), args.small)
+    binary = args.binary or resolve_implementation(args.implementation)["binary"]
+    run_suite(binary.resolve(), args.output.resolve(), args.small, args.implementation,
+              args.experiment, args.ops)
 
 
 if __name__ == "__main__":

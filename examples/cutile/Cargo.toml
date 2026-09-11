@@ -1,0 +1,18 @@
+[package]
+name = "mage-cutile"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+# Turns on the `--tune` mode, which drives cutile::tune. Off by default: the
+# tuner is an experimental feature of the upstream crate.
+tune = ["cutile/experimental-tune"]
+
+[dependencies]
+cutile = "=0.3.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libloading = "0.8"

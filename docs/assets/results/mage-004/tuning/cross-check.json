@@ -1,0 +1,34 @@
+[
+  {
+    "config": "manual:128x64x8",
+    "tile": "128,64,8",
+    "mode": "single",
+    "median_us": 189.43999707698822,
+    "min_us": 188.35200369358063,
+    "passed": true
+  },
+  {
+    "config": "manual:128x64x8",
+    "tile": "128,64,8",
+    "mode": "batch:10",
+    "median_us": 174.89599585533142,
+    "min_us": 172.5216031074524,
+    "passed": true
+  },
+  {
+    "config": "tuner:32x128x32",
+    "tile": "32,128,32",
+    "mode": "single",
+    "median_us": 137.28000223636627,
+    "min_us": 135.16800105571747,
+    "passed": true
+  },
+  {
+    "config": "tuner:32x128x32",
+    "tile": "32,128,32",
+    "mode": "batch:10",
+    "median_us": 121.75359725952148,
+    "min_us": 120.79360485076904,
+    "passed": true
+  }
+]
