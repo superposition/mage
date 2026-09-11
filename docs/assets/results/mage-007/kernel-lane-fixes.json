@@ -1,0 +1,45 @@
+{
+  "experiment": "mage-007",
+  "title": "What three kernel changes measured",
+  "instrument": "Nsight Systems kernel time, mean over 100 launches per measurement",
+  "session": "10 September 2026, RTX 4090 (sm_89), driver 591.74, WSL2, device idle. Each before/after pair was measured in one session with the same warp-up and the same inputs; Triton and cuTile references are quoted from their own sessions and are marked as such.",
+  "changes": [
+    {
+      "operation": "layernorm",
+      "label": "LayerNorm 4096x4096",
+      "issue": 54,
+      "pr": 69,
+      "note": "The two-warp row kernel was capped at width 2048, so 4096 fell back to the single-warp kernel. Its own soundness condition already held at 4096. Worst full-output error 4.77e-07.",
+      "bars": [
+        { "name": "single-warp (before)", "kind": "before", "us": 255.41 },
+        { "name": "two-warp (after)", "kind": "after", "us": 186.80 },
+        { "name": "Triton", "kind": "reference", "us": 181.59, "source": "mage-006, different session" }
+      ]
+    },
+    {
+      "operation": "neighbor",
+      "label": "Neighbor aggregation 4096x64x65536",
+      "issue": 59,
+      "pr": 71,
+      "note": "One 128-bit feature quad per thread with the edge walk unrolled by two, so two gathers overlap. Worst full-output error 3.58e-07.",
+      "bars": [
+        { "name": "scalar (before)", "kind": "before", "us": 9.45 },
+        { "name": "quad (after)", "kind": "after", "us": 7.06 },
+        { "name": "Triton", "kind": "reference", "us": 5.97, "source": "mage-006, different session" }
+      ]
+    },
+    {
+      "operation": "gelu",
+      "label": "Bias + GELU 4096x768",
+      "issue": 59,
+      "pr": 71,
+      "note": "Four features per thread was tried on this kernel and rejected: 2.6x slower than the scalar form, so the scalar kernel stays. Recorded so the attempt is not repeated blind.",
+      "bars": [
+        { "name": "scalar (kept)", "kind": "after", "us": 10.29 },
+        { "name": "quad (rejected)", "kind": "rejected", "us": 27.00 },
+        { "name": "Triton", "kind": "reference", "us": 7.76, "source": "mage-004, different session" },
+        { "name": "cuTile Rust", "kind": "reference", "us": 7.97, "source": "mage-004, different session" }
+      ]
+    }
+  ]
+}
