@@ -55,21 +55,21 @@ every measured launch, so compilation is outside the timed region.
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 52.99 | 91.92 | 218.50 | 82.6 |
-| Bias + GELU 4096×768 | 36.01 | 27.21 | 30.84 | 13.3 |
-| LayerNorm 4096×768 | 20.75 | 27.65 | 36.68 | 12.9 |
-| Triangle contraction 128×32 | 61.11 | 107.83 | 165.22 | 83.5 |
-| Neighbor aggregation 4096×64×65536 | 98.46 | 28.07 | 62.12 | 12.9 |
+| Matrix multiplication 1024³ | 52.40 | 93.50 | 170.79 | 82.6 |
+| Bias + GELU 4096×768 | 33.02 | 27.93 | 29.97 | 13.3 |
+| LayerNorm 4096×768 | 21.68 | 23.52 | 37.22 | 12.9 |
+| Triangle contraction 128×32 | 61.81 | 99.96 | 157.84 | 83.5 |
+| Neighbor aggregation 4096×64×65536 | 95.07 | 27.00 | 61.22 | 12.9 |
 
 ## GPU kernel time (µs per operation, single capture, 100 calls)
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 44.04 | 83.61 | 172.52 | 80.00 |
-| Bias + GELU 4096×768 | 16.12 | 7.76 | **7.97** | 11.0 |
-| LayerNorm 4096×768 | 18.58 | 8.08 | 10.46 | 10.05 |
-| Triangle contraction 128×32 | 28.49 | 93.90 | 120.72 | 80.1 |
-| Neighbor aggregation 4096×64×65536 | 73.07 | 7.97 | 35.36 | 10.3 |
+| Matrix multiplication 1024³ | 56.04 | 83.06 | 131.56 | 80.00 |
+| Bias + GELU 4096×768 | 15.88 | 7.73 | **8.19** | 11.0 |
+| LayerNorm 4096×768 | 11.42 | 8.15 | 10.76 | 10.05 |
+| Triangle contraction 128×32 | 28.64 | 102.19 | 116.08 | 80.1 |
+| Neighbor aggregation 4096×64×65536 | 67.32 | 7.97 | 35.37 | 10.3 |
 
 Kernel time is summed over the launches one operation needs — PyTorch's bias +
 GELU is two kernels, its triangle contraction three and its neighbor
@@ -78,12 +78,12 @@ aggregation four; every other cell is one. The launch counts come from
 launch.
 
 The two views disagree, and the disagreement is the result. On GPU time the tile
-kernels are **ahead of cuda-oxide on bias + GELU** (7.97 against 11.0 µs) and
-level with it on layer norm (10.46 against 10.05 µs), while trailing on the
-other three: 2.2× on matrix multiply, 1.5× on triangle contraction and 3.4× on
+kernels are **ahead of cuda-oxide on bias + GELU** (8.19 against 11.0 µs) and
+level with it on layer norm (10.76 against 10.05 µs), while trailing on the
+other three: 1.6× on matrix multiply, 1.4× on triangle contraction and 3.4× on
 neighbor aggregation. On event spans the tile kernels trail everywhere,
-including where their kernels are faster: bias + GELU spans 30.84 µs around a
-kernel that takes 7.97 µs.
+including where their kernels are faster: bias + GELU spans 29.97 µs around a
+kernel that takes 8.19 µs.
 
 That gap is the launch path, not the kernel. Each timed iteration here records
 an event, launches, records a second event and synchronizes; for a runtime whose
@@ -99,16 +99,16 @@ above:
 
 | Operation | single | batch:10 | kernel |
 | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 192.45 | 160.46 | 172.52 |
-| Bias + GELU 4096×768 | 24.64 | 8.40 | 7.97 |
-| LayerNorm 4096×768 | 29.86 | 10.64 | 10.46 |
-| Triangle contraction 128×32 | 135.07 | 118.61 | 120.72 |
-| Neighbor aggregation 4096×64×65536 | 49.25 | 33.18 | 35.36 |
+| Matrix multiplication 1024³ | 150.53 | 127.07 | 131.56 |
+| Bias + GELU 4096×768 | 25.76 | 8.50 | 8.19 |
+| LayerNorm 4096×768 | 30.62 | 10.64 | 10.76 |
+| Triangle contraction 128×32 | 136.19 | 121.80 | 116.08 |
+| Neighbor aggregation 4096×64×65536 | 49.28 | 33.28 | 35.37 |
 
 The difference between the first two columns is what the host spent per launch
-while every launch was awaited: about 16 µs on the small operations and 32 µs on
-matrix multiply. Batched, the spans converge on the kernel time — bias + GELU and
-layer norm land within 0.5 µs of their kernels, and matrix multiply's batched
+while every launch was awaited: 14–20 µs on the four short operations and 23 µs
+on matrix multiply. Batched, the spans converge on the kernel time — bias + GELU
+and layer norm land within 0.5 µs of their kernels, and matrix multiply's batched
 span sits *below* its kernel time because submission overlaps execution.
 
 The cuda-oxide spans in the event table (13.3 µs for bias + GELU over an 11.0 µs
@@ -132,10 +132,10 @@ execution, same 100 samples after 25 warmup launches:
 
 | Operation | single | batch:10 | batch:100 | graph:10 | graph:25 | kernel |
 | --- | --- | --- | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 188.42 | 175.67 | 183.69 | **161.77** | 182.10 | 172.52 |
-| Bias + GELU 4096×768 | 24.91 | 8.91 | 9.82 | 8.67 | **7.73** | 7.97 |
+| Matrix multiplication 1024³ | 138.24 | 133.02 | 140.48 | **122.87** | 144.11 | 131.56 |
+| Bias + GELU 4096×768 | 25.60 | 8.40 | 10.17 | 8.73 | **7.77** | 8.19 |
 
-Replay is the best mode for both: bias + GELU lands at 7.73 µs against a 7.97 µs
+Replay is the best mode for both: bias + GELU lands at 7.77 µs against an 8.19 µs
 kernel, so the host cost that dominated the single-launch column is gone
 entirely, and matrix multiply's replayed span sits below its kernel time because
 capture removes per-launch submission from the critical path. Batching and
@@ -151,19 +151,19 @@ after 25 warmup calls:
 
 | Operation | PyTorch single → batched | Triton single → batched | cuTile single → batched |
 | --- | --- | --- | --- |
-| Matrix multiplication 1024³ | 47.10 → 46.29 | 87.04 → 75.16 | 185.34 → 170.39 |
-| Bias + GELU 4096×768 | 18.43 → 19.75 | 19.46 → 13.32 | 24.58 → 8.47 |
-| LayerNorm 4096×768 | 13.31 → 12.07 | 20.48 → 13.72 | 29.66 → 10.63 |
-| Triangle contraction 128×32 | 46.80 → 35.50 | 88.38 → 77.72 | 132.29 → 120.00 |
-| Neighbor aggregation 4096×64×65536 | 79.87 → 67.88 | 20.48 → 13.82 | 48.99 → 33.18 |
+| Matrix multiplication 1024³ | 50.18 → 46.39 | 87.04 → 75.82 | 139.09 → 122.26 |
+| Bias + GELU 4096×768 | 18.43 → 19.35 | 19.46 → 13.52 | 25.60 → 8.50 |
+| LayerNorm 4096×768 | 13.31 → 12.08 | 20.48 → 13.62 | 30.66 → 10.65 |
+| Triangle contraction 128×32 | 46.08 → 35.43 | 89.09 → 78.52 | 131.07 → 112.33 |
+| Neighbor aggregation 4096×64×65536 | 84.00 → 68.20 | 20.48 → 13.93 | 51.39 → 33.28 |
 
 Batching helps every implementation, and helps the tile runtime most because its
 per-call host cost was the largest. With the launch path matched, bias + GELU
-(8.47) and layer norm (10.63) become the tile kernels' wins, matrix multiply and
+(8.50) and layer norm (10.65) become the tile kernels' wins, matrix multiply and
 triangle contraction stay behind because those kernels are genuinely slower
-(172.52 and 120.72 against 44.04 and 28.49), and neighbor aggregation lands
+(131.56 and 116.08 against 56.04 and 28.64), and neighbor aggregation lands
 between PyTorch and Triton. Triton's own launcher costs 6–7 µs per awaited call
-(19.46 → 13.32 on bias + GELU); PyTorch's costs about 1 µs.
+(19.46 → 13.52 on bias + GELU); PyTorch's costs about 1 µs.
 
 ## Correctness
 
@@ -172,11 +172,11 @@ observed error:
 
 | Operation | max abs error | tolerance |
 | --- | --- | --- |
-| Matrix multiplication | 1.48e-05 | 1e-4 |
+| Matrix multiplication | 1.38e-05 | 1e-4 |
 | Bias + GELU | 2.38e-07 | 1e-4 |
 | LayerNorm | 4.77e-07 | 1e-4 |
 | Triangle contraction | 7.15e-07 | 1e-4 |
-| Neighbor aggregation | 3.58e-07 | 1e-4 |
+| Neighbor aggregation | 2.98e-07 | 1e-4 |
 
 The matrix multiply is the interesting one: `mma` on `f32` is not the tensor-core
 TF32 path that the same intrinsic selects in a lower-precision kernel. Its error
@@ -198,7 +198,10 @@ specialization, all producing the same output, event span on 1024³ (µs):
 | 64×64×8 | 271.1 | 128×64×32 | 342.9 |
 | 128×128×8 | 469.8 | 256×64×8 | 612.0 |
 
-The retained tile is 128 × 64 × 8, 3.7× faster than the starting one. The shape
+The retained tile from this sweep is 128 × 64 × 8, 3.7× faster than the starting
+one — and the autotuner below then beat it, so the binary ships 32 × 128 × 32 and
+every comparison table in this note was measured with that. The sweep table stands
+as the record of the hand-picked search. The shape
 is not monotone in any single dimension: deepening K from 8 to 32 costs 42%
 at 16 × 16 but only 6% at 64 × 64, and 128 × 128 × 8 is 2.3× slower than
 128 × 64 × 8, which is the signature of a register or occupancy cliff rather
@@ -229,9 +232,11 @@ The tuner's pick is faster in both views, so the hand-picked ladder — twelve
 configurations, chosen to trace a ratio rather than to search — simply missed
 the better region. The library's search found it in 17 seconds and 38 trials.
 
-**The binary now ships 32 × 128 × 32.** The two tables above were measured in
-the 00:05 session with 128 × 64 × 8 and are quoted as that session measured them;
-re-running the comparison with the tuned tile is listed under open items.
+**The binary ships 32 × 128 × 32**, and every table in this note was re-measured
+with it in a single session on an idle device (utc 01:19). The tuned tile moved
+matrix multiply from 172.52 to **131.56 µs** of kernel time and from 218.50 to
+170.79 µs of span, which is where the 1.6× in the comparison above comes from;
+the other four operations moved by less than 5%.
 
 ## What shaped the kernels
 
@@ -286,6 +291,9 @@ hatch the plan anticipated, and it is why it was ported last.
   reduced precision.
 - Compilation, input transfers, process startup and end-to-end service work are
   excluded, as in the earlier rounds.
+- The tile-sweep table was measured before the autotuner ran and is quoted from
+  that session; every comparison and launch-path table is from one later session
+  with the tuned tile.
 - The cuda-oxide column is the third note's retained measurement, not taken in
   the same session as these numbers.
 
@@ -294,10 +302,9 @@ hatch the plan anticipated, and it is why it was ported last.
 1. **Graphs for the other three kernels**: layer norm, triangle contraction and
    neighbor aggregation reject `--mode graph` today; each needs its own capture
    because a graph is recorded per launch shape.
-2. **Re-run the comparison with the tuned tile** (32 × 128 × 32) so the published
-   table and the shipped binary describe the same configuration, and sweep the
-   triangle and neighbor tiles too — neither was ever tuned, and the neighbor
-   kernel is the track's weakest result.
+2. **Tune the triangle and neighbor tiles**: neither was ever swept, and the
+   neighbor kernel is the track's weakest result — 3.4× behind the hand-written
+   kernel at 35.37 µs.
 3. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
