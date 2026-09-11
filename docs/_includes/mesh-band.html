@@ -1,0 +1,23 @@
+{%- comment -%}
+Mesh-gradient band, drawn by the mesh-band.js canvas runner.
+
+Parameters:
+  colors   comma-separated spot colours (palette defaults: green, rust, python blue)
+  weights  comma-separated numbers, one per spot; the largest becomes full opacity and
+           the rest are scaled against it. Pass the note's headline ratios so the
+           picture says what the note says.
+  caption  one sentence for the figcaption, ideally naming what the weights are.
+  still    optional full-size PNG URL: shown instead of the canvas when scripting is off.
+{%- endcomment -%}
+<figure class="mesh-band"
+        data-colors="{{ include.colors | default: '#91dbba,#c9b2ff,#93caff' }}"
+        data-weights="{{ include.weights | default: '1,1,1' }}"
+        data-distortion="{{ include.distortion | default: 0.8 }}"
+        data-swirl="{{ include.swirl | default: 0.55 }}">
+  <canvas aria-hidden="true" focusable="false"></canvas>
+  <noscript><img src="{{ include.still | relative_url }}" alt="{{ include.alt | default: '' }}" width="1480" height="440"></noscript>
+  <figcaption>
+    {{ include.caption }}
+    <span class="mesh-band-credit">Field: <a href="https://github.com/paper-design/shaders" rel="noopener">Paper Shaders</a> mesh gradient (Apache-2.0), palette and weights from this note.</span>
+  </figcaption>
+</figure>

@@ -152,6 +152,32 @@ mjx-container[display] { overflow-x: auto; overflow-y: hidden; padding-block: 8p
 .profile-plot img { display: block; width: 100%; height: auto; }
 .profile-plot figcaption, .profile-limit { font-size: 12px; line-height: 1.7; color: var(--muted); }
 .profile-plot figcaption p { margin: 8px 0; }
+
+/* Mesh-gradient band: a canvas hero for notes whose argument is about memory.
+   The CSS backdrop shows until a frame has been drawn, so a device without
+   WebGL 2 (or without scripting) still gets an intentional panel. */
+.mesh-band {
+  position: relative;
+  margin: 26px 0 30px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 740 / 220;
+  background:
+    radial-gradient(120% 160% at 18% 28%, rgba(145, 219, 186, .22), transparent 62%),
+    radial-gradient(110% 150% at 78% 62%, rgba(201, 178, 255, .20), transparent 60%),
+    radial-gradient(90% 130% at 52% 92%, rgba(147, 202, 255, .16), transparent 58%),
+    var(--paper);
+}
+.mesh-band canvas { display: block; width: 100%; height: 100%; opacity: 0; transition: opacity .7s ease; }
+.mesh-band[data-ready] canvas { opacity: 1; }
+.mesh-band noscript img { display: block; width: 100%; height: auto; }
+.mesh-band figcaption { padding: 10px 14px 12px; border-top: 1px solid var(--rule); background: var(--surface); font-size: 12px; line-height: 1.7; color: var(--muted); }
+.mesh-band figcaption p { margin: 0 0 6px; }
+.mesh-band-credit { display: block; margin-top: 6px; font: 11px/1.6 var(--mono); color: #6f7b8f; }
+.mesh-band-credit a { color: #6f7b8f; }
+.mesh-band-credit a:hover { color: var(--muted); }
+@media (max-width: 520px) { .mesh-band { aspect-ratio: 320 / 200; } }
 .profile-scale { color: var(--ink); }
 .profile-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 11px; }
 .profile-links a { text-decoration: none; }
