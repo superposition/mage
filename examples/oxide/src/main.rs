@@ -1054,7 +1054,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             // quad slots of its 128 threads, for rows up to 1024 elements.
             if width % 4 == 0 && width <= 1024 {
                 "layer_norm_row"
-            } else if width % 4 == 0 && width <= 2048 && (width as usize).div_ceil(8) % 32 == 0 {
+            } else if width % 4 == 0 && width <= 4096 && (width as usize).div_ceil(8) % 32 == 0 {
                 // The two-warp split shares a row by whole 32-lane steps, so it is only
                 // sound when each warp's span is a multiple of 32; narrower rows would
                 // count part of the row twice and take the single-warp kernel instead.
