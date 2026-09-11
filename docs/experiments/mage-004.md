@@ -2,35 +2,29 @@
 title: What the compiler chose
 permalink: /experiments/mage-004/
 eyebrow: "Field note 004 / Mathematics on a GPU"
-description: Handing the kernel decisions to a tile compiler: where it beat the hand-written kernels, where it lost, and why most of the apparent difference turned out to be the cost of starting work rather than the cost of doing it.
+description: "Handing the kernel decisions to a tile compiler — where it beat the hand-written kernels, where it lost, and why most of the apparent difference turned out to be the cost of starting work rather than the cost of doing it."
 math: true
 ---
 
-The [earlier notes]({{ '/experiments/mage-003/' | relative_url }}) wrote the kernels by hand. Each
-thread owned a small block of results, and the layout of shared memory, the width of each load and
-the placement of barriers were all deliberate choices that produced measured wins.
+The [earlier notes]({{ '/experiments/mage-003/' | relative_url }}) wrote these kernels by hand: each
+thread owned a fixed block of results, and the width of every load, the layout of shared memory and
+the placement of barriers were deliberate choices with measured effects.
 
-This note hands those choices to a compiler. [cuTile Rust](https://github.com/NVlabs/cutile-rs)
-lets you write a kernel as a single-threaded program over *tiles* — blocks of data — and works out
-the threads, the memory layout and the tensor-core instructions itself. The question is what that is
-worth on the same five operations, measured the same way.
+This note gives those decisions to a compiler. A [cuTile Rust](https://github.com/NVlabs/cutile-rs)
+kernel is a single-threaded program over *tiles* — blocks of data — and the compiler decides how many
+warps receive each tile, which values stay in registers, when loads widen to 128 bits, and when a
+tensor-core instruction replaces a multiply. On the same five operations it is competitive: bias +
+GELU 8.19 µs against the hand-written 11.0, layer normalization 10.76 against 10.05. It trails where
+reuse is highest — matrix multiply 131.56 against 80.00, triangle contraction 116.08 against 80.1 —
+and by 3.4× on neighbor aggregation, whose irregular gathers have no safe expression in the tile
+model and run through raw device pointers instead.
 
-The answer has three parts, and the middle one is the surprise.
-
-**The compiler is competitive.** It beats the hand-written kernel on bias + GELU (8.19 µs against
-11.0) and draws level on layer normalization (10.8 against 10.1). It loses on the two
-matrix-shaped operations, 1.6× and 1.4×, and by 3.4× on neighbor aggregation, which is irregular
-enough that the tile model has no safe way to express it.
-
-**Most of the gap in the timing column was not the kernel.** Timing that waits for every call to
-finish prices the *cost of starting work*, and this runtime starts work expensively: 14–23 µs per
-call against 2–3 µs for the hand-written kernels. Queue the calls up, or replay them from a
-recorded graph, and the numbers fall onto the kernel times. The kernels were never as far apart as
-the column said, and any comparison that blocks on every call will mislead in the same direction.
-
-**The library's own search beat mine.** Twelve hand-picked tile shapes moved the matrix multiply
-from 738 µs to 201 µs of measured time; the bundled autotuner then found a shape that measured
-137 µs against my 189 µs. Picking twelve configurations to trace a ratio is not a search.
+Two measurement facts matter more than the ranking. Timing that waits for each call prices the cost
+of *starting* work: 14–23 µs per call against 2–3 µs for the hand-written kernel, which vanishes
+when ten calls share one measurement — bias + GELU goes from 25.76 µs to 8.50 µs against an 8.19 µs
+kernel. And tile shape is a memory decision: the same arithmetic measured 738 µs at the tutorial's
+16×16×8 tile and 131.56 µs at 32×128×32, and the compiler's own autotuner found a shape 27% faster
+than the best of twelve hand-picked ones.
 
 ## The five operations, two views
 
@@ -115,7 +109,7 @@ three launch paths matched the wins and losses are the ones in the first table a
 same session. The kernel track has since published [mage-006]({{ '/experiments/mage-006/' | relative_url }})
 with lower numbers of its own, so the two Rust columns should not be subtracted from each other.*
 
-## The tile shape, and the search that beat me
+## Tile shape is a memory decision
 
 The matrix multiply started from the upstream tutorial's 16 × 16 × 8 tile and was slow. Twelve
 hand-picked configurations took it from 738 µs to 201 µs, and the shape was not monotone in any
@@ -130,9 +124,10 @@ limit rather than arithmetic.
 | 64×64×32 | 255.4 | 128×128×8 | 469.8 |
 
 Then the library's autotuner searched the same space properly — 36 candidates, each validated
-before timing, kernel time alone, 17 seconds — and chose **32 × 128 × 32**, which measured
-137.28 µs against my 189.44 µs when both were checked in one session. Every number in this note
-was re-measured with it afterwards, which is where the matrix multiply's 131.56 µs comes from.
+before timing, kernel time alone, in 17 seconds — and chose **32 × 128 × 32**. Checked in one
+session, that shape measured 137.28 µs against the hand-picked 128 × 64 × 8's 189.44 µs. Every
+number in this note was re-measured with it afterwards, which is where the matrix multiply's
+131.56 µs comes from.
 
 ## What the compiler would not let us write
 
