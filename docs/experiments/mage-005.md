@@ -99,7 +99,18 @@ A third finding is recorded rather than explained: the first kernel-time capture
 
 The same loop on layer normalization ran four generations and kept none. One warp per row measured 13.07 µs against 12.29; four warps per row and 128-thread blocks both measured 12.29 against 12.29; 512-thread blocks measured 13.31. One generation was refused outright because the committed control drifted 12.5% inside it.
 
-The committed arrangement — two warps per row in a 256-thread block — is a local optimum in that space, and the loop reports that instead of manufacturing a change. The distance to Triton's layer-normalization kernel (10.05 against 7.99 µs) is not reachable by re-assigning the existing work; it needs a different decomposition, which is a different kind of proposal than the ones this loop can make.
+The committed arrangement — two warps per row in a 256-thread block — is a local optimum in that space, and the loop reports that instead of manufacturing a change.
+
+That prediction was then tested outside the loop. A block-per-row kernel (`layer_norm_row`, PR #52) gives each thread a quad plus a masked tail quad, reduces four warps with shuffles behind one barrier, and uses the approximate reciprocal square root. Captured in one session, three interleaved rounds of 100 iterations, kernel microseconds per iteration:
+
+| Implementation | Rounds | Median |
+| --- | --- | ---: |
+| Rust, committed (`layer_norm_row`) | 8.770, 8.842, 8.931 | 8.842 |
+| Rust, the loop's configuration (two warps per row) | 10.133, 10.345, 10.413 | 10.345 |
+| Triton (`norm_kernel`) | 8.002, 8.288, 8.231 | 8.231 |
+| PyTorch (`vectorized_layer_norm_kernel`) | 19.532, 11.217, 11.922 | 11.922 |
+
+The committed kernel is 7% behind Triton where the generated form is 26% behind. The remaining distance needed a different decomposition rather than a different split of the same work — which is what the loop's null result implied, and what its templates cannot express. That is now the second such gap: `cp.async` for the matrix multiply, block-per-row for the normalization. Both were closed by hand.
 
 The layer normalization work did surface a real defect. `layer_norm_pair` splits a row between two warps in whole 32-lane steps, which double-counts part of the row whenever each warp's span is not a multiple of 32. Width 768 (span 96) hid it; width 128 failed the reference at 0.43 absolute error. The host now keeps that kernel to widths it can share and otherwise takes the single-warp kernel, whose every access is guarded.
 
@@ -107,7 +118,8 @@ The layer normalization work did surface a real defect. `layer_norm_pair` splits
 
 - One shape (1024³), one dtype (FP32), one GPU (RTX 4090, unlocked clocks, WSL). Nothing here speaks to training shapes, batching, or a different device.
 - No hardware counters are available, so the interaction is *attributed* by paired captures, not *explained* by a bounded resource. The guard branches are the only structural difference between the two forms that bracket the retained kernel at the same `k_step`, and why they help is still open — the pipeline's win suggests the answer is where the copies wait, not how many there are.
-- The loop optimizes what it measures. Every accepted step improved the event span; only the retained configuration also improved kernel time, and the loop could not tell the difference at the time. It never proposed anything structural — no `cp.async`, no split-K — because its templates cannot express them.
+- The loop optimizes what it measures. Every accepted step improved the event span; only the retained configuration also improved kernel time, and the loop could not tell the difference at the time.
+- It never proposed anything structural — no `cp.async`, no split-K, no block-per-row normalization — because its templates cannot express them. Both improvements that followed the loop's own came from that unsearchable space, which is where the next work goes.
 - The retained configuration is not the fastest kernel in the repository any more, and it is not claimed to be.
 
 ## Method and evidence
