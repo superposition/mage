@@ -57,6 +57,10 @@ def matmul_space() -> list[dict]:
             for quad_stage in (True, False):
                 for k_step in (32, 64):
                     for staging in render.STAGING_MODES:
+                        # The pipelined form issues its own copies, so quad_stage does not
+                        # reach it: one variant per geometry is enough.
+                        if staging == "pipeline" and not quad_stage:
+                            continue
                         params = dict(render.DEFAULT_MATMUL, block=block, transpose_a=transpose_a,
                                       quad_stage=quad_stage, k_step=k_step, staging=staging)
                         try:
