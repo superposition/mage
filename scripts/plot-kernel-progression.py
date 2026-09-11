@@ -4,19 +4,21 @@
 # ///
 """Draw how the two rewritten Rust kernels reached their measured kernel time.
 
-Run: uv run --script scripts/plot-kernel-progression.py --experiment mage-003
+Run: uv run --script scripts/plot-kernel-progression.py --experiment mage-004
 The experiment selects the figure namespace under docs/assets; the stage values
 are documented here and checked against the committed evidence namespaces.
 Writes docs/assets/figures/<experiment>/kernel-progression.svg, its mobile
 variant, and a downloadable PNG. The Pages build needs only the committed SVG.
 
-The six stage values are the measurements quoted in the field note. Five of them
-are read back from a committed evidence namespace and must match it: mage-001
-(343.99 / 18.64 us), mage-002 (141.70 us) and mage-003 (80.00 / 10.05 us). The
-seventh figure -- LayerNorm after the first rewrite, 11.03 us -- is the warp
-kernel as measured in the mage-003 capture session; the mage-002 namespace was
-captured in an earlier session and records 11.09 us for the same kernel, which
-is inside the run-to-run spread this harness can resolve.
+Four stages per kernel are documented. STAGES names how many of them a published
+figure shows, and the rejected-variant footer travels with the experiment whose
+note quotes it. Eight of the stage values are read back from a committed evidence
+namespace and must match it: mage-001 (343.99 / 18.64 us), mage-002 (141.70 us),
+mage-003 (80.00 / 10.05 us) and mage-004 (68.62 / 8.97 us). The remaining value --
+LayerNorm after the first rewrite, 11.03 us -- is the warp kernel as measured in
+the mage-003 capture session; the mage-002 namespace was captured in an earlier
+session and records 11.09 us for the same kernel, which is inside the run-to-run
+spread this harness can resolve.
 """
 import argparse
 import json
@@ -34,16 +36,32 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "mage-001"
 BG, INK, MUTED, RULE = "#101217", "#edf0f5", "#a0a9b9", "#303641"
 RUST = "#c9b2ff"
-# Alpha ramp over one hue: the earliest arrangement is the faintest bar.
-ALPHA = (.42, .68, 1.0)
 TITLE = "How the two Rust kernels reached their measured kernel time"
 SUBTITLE = ("GPU kernel time per stage, from separate Nsight Systems captures of 100 iterations on the same FP32 "
             "shapes. The label at each stage is the change that was made; the factor is that step's speed-up.")
-FOOTER = ("Not adopted, all single-run development measurements with the metric named: matrix multiplication with "
-          "32 × 32 tiles and a 2 × 4 register tile 210.51 us and an 8 × 4 register tile on 128-row blocks 147.74 us, "
-          "both CUDA-event spans; LayerNorm with 128-thread blocks 14.4, a row staged in shared memory 14.3, eight named "
-          "quad registers 13.4-14.0, and four warps per row 13.3-13.7, all event spans, and a row in a [F32x4; 8] array "
-          "22.12 us of kernel time. RTX 4090, WSL2, unlocked clocks. Lower is better.")
+# What each published figure shows: how many stages of each series it draws, the alpha
+# ramp over one hue (the earliest arrangement is the faintest bar), and the rejected
+# variants the field note that accompanies it quotes.
+FIGURES = {
+    "mage-003": {"stages": 3, "alpha": (.42, .68, 1.0), "rejected": (
+        "matrix multiplication with 32 × 32 tiles and a 2 × 4 register tile 210.51 us and an 8 × 4 register tile on "
+        "128-row blocks 147.74 us, both CUDA-event spans; LayerNorm with 128-thread blocks 14.4, a row staged in shared "
+        "memory 14.3, eight named quad registers 13.4-14.0, and four warps per row 13.3-13.7, all event spans, and a "
+        "row in a [F32x4; 8] array 22.12 us of kernel time.")},
+    "mage-004": {"stages": 4, "alpha": (.42, .60, .80, 1.0), "rejected": (
+        "LayerNorm with 96 threads per row 8.99 and with 192 threads holding one quad each 9.11, both GPU kernel time; "
+        "LayerNorm with four warps per row on an uneven split 13.3-13.7, a row staged in shared memory 14.3, and a row "
+        "held in registers on the two-warp split 13.88 against 12.67, all event spans.")},
+}
+FOOTER_HEAD = "Not adopted, all single-run development measurements with the metric named: "
+FOOTER_TAIL = " RTX 4090, WSL2, unlocked clocks. Lower is better."
+
+
+def footer():
+    """The experiment's rejected-variant footer, read by the field note that quotes it."""
+    return FOOTER_HEAD + FIGURES[EXPERIMENT]["rejected"] + FOOTER_TAIL
+
+
 # (stage, kernel microseconds, evidence namespace to check against, change made at this stage)
 OPS = (
     ("matmul", "Matrix multiplication", (
@@ -53,6 +71,8 @@ OPS = (
          "4 × 4 outputs per thread, 64 × 64 block tiles · 128-bit global loads · K step 32 · 0.5 shared reads per multiply-add"),
         ("PR #43", 80.00, "mage-003",
          "B tile read as 128-bit quads · A tile transposed k-major, row stride 68 · K step 64 · 0.125 shared reads per multiply-add"),
+        ("PR #49", 68.62, "mage-004",
+         "two shared buffers · the next K tile loads with cp.async while the current one multiplies · 4-byte A copies, 16-byte B copies"),
     )),
     ("layernorm", "LayerNorm", (
         ("mage-001", 18.64, BASELINE,
@@ -61,6 +81,8 @@ OPS = (
          "one warp per row · 128-bit quads · shuffle reductions replace the barriers"),
         ("PR #44", 10.05, "mage-003",
          "two warps per row, half a row each · one shared exchange behind a single barrier · 1024 blocks of 256 threads"),
+        ("PR #52", 8.97, "mage-004",
+         "one block per row, 128 threads holding a quad each · a single pass over the row, held in registers · eight floats of shared behind one barrier"),
     )),
 )
 
@@ -95,11 +117,12 @@ def kernel_times(namespace):
 
 
 def checked(measured):
-    """Return the documented stages with every value that has an evidence namespace verified."""
+    """Return the stages this experiment's figure shows, checking every documented value that
+    has an evidence namespace against the namespace it names."""
     stages = []
     for op, label, steps in OPS:
         rows = []
-        for name, value, namespace, change in steps:
+        for name, value, namespace, change in steps[:FIGURES[EXPERIMENT]["stages"]]:
             if namespace is not None:
                 recorded = measured[namespace][op]
                 assert abs(recorded - value) < 0.05, (op, name, recorded, value)
@@ -119,7 +142,7 @@ def plot(stages, mobile):
     for ax, (op, label, rows) in zip(axes, stages):
         ax.set_facecolor(BG)
         for index, (name, value, _) in enumerate(rows):
-            ax.barh(index, value, height=.34, color=RUST, alpha=ALPHA[index], zorder=3)
+            ax.barh(index, value, height=.34, color=RUST, alpha=FIGURES[EXPERIMENT]["alpha"][index], zorder=3)
             ax.annotate(f"{value:.2f}", (value, index), xytext=(5, 0), textcoords="offset points",
                         ha="left", va="center", color=INK, fontsize=label_pt - .5)
             ax.text(-.02, index - .20, name, transform=ax.get_yaxis_transform(), ha="right", va="center",
@@ -151,7 +174,7 @@ def plot(stages, mobile):
              fontsize=11 if mobile else 16, weight="bold", va="top")
     fig.text(.01, .945 if mobile else .935, fold(SUBTITLE, 7.6 if mobile else 9.6, caption), color=MUTED,
              fontsize=7.6 if mobile else 9.6, va="top")
-    fig.text(.01, .012, fold(FOOTER, 6.8 if mobile else 8.4, caption), color=MUTED,
+    fig.text(.01, .012, fold(footer(), 6.8 if mobile else 8.4, caption), color=MUTED,
              fontsize=6.8 if mobile else 8.4, va="bottom")
     name = f"kernel-progression{'-mobile' if mobile else ''}"
     target = ROOT / "docs/assets/figures" / EXPERIMENT / f"{name}.svg"
@@ -166,9 +189,11 @@ def plot(stages, mobile):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--experiment", default=os.environ.get("MAGE_EXPERIMENT", "mage-003"),
+    parser.add_argument("--experiment", default=os.environ.get("MAGE_EXPERIMENT", "mage-004"),
                         help="namespace under docs/assets/figures for the written files")
     args = parser.parse_args()
+    if args.experiment not in FIGURES:
+        parser.error(f"--experiment must be one of: {', '.join(sorted(FIGURES))}")
     EXPERIMENT = args.experiment
     # Embed glyph outlines so downloads render identically without local fonts.
     # The page provides descriptive alt text and an accessible numeric table.

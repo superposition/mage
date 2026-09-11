@@ -21,4 +21,10 @@ A ratio between two register shapes separates shared-memory instructions from ar
 
 [Read the third investigation]({{ '/experiments/mage-003/' | relative_url }}).
 
+### 004 — The load in flight, and the shape Triton uses
+
+A matrix multiply that waits for its own tile loads can be given a second buffer and an asynchronous copy, so the next tile arrives while the current one is multiplied. A layer norm can be rearranged into the shape the other kernel already uses, read from its generated code. The second rewrite narrows the gap and does not close it.
+
+[Read the fourth investigation]({{ '/experiments/mage-004/' | relative_url }}).
+
 The code and detailed evidence are maintained [in GitHub](https://github.com/superposition/mage). The [Superposition journal](https://superposition.github.io/) follows the motivation behind the work.
