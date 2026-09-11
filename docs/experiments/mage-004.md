@@ -15,10 +15,10 @@ of the [third field note]({{ '/experiments/mage-003/' | relative_url }}) were ti
 decisions, so the question here is what happens when the compiler makes them.
 
 It makes them well enough to beat the hand-written kernel on one operation and to
-match it on another, and it does not on the two matmul-shaped ones. But the more
+match it on another, and it does not on the other three. But the more
 useful result is elsewhere: **most of the difference in the comparison's timing
 column was not the kernel at all.** A lazy runtime prices its host submission path
-when every call is awaited, and the tile runtime's costs about 16 µs per launch
+when every call is awaited, and the tile runtime's costs 14–23 µs per launch
 against the hand-written runtime's 2–3 µs. Batch the launches or replay them from a
 CUDA graph and the spans fall onto the kernel times. The kernels were never as far
 apart as the column said.
