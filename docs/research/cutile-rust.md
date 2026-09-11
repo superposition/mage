@@ -1,13 +1,15 @@
 # Adding a cuTile Rust track
 
-Status: **all five operations are ported and measured** (2026-09-10), with
-neighbor's kernel time still to capture. The toolkit gate passed,
-`examples/cutile` builds and runs, and [mage-004](../experiments/mage-004.md)
-holds the values: the tile kernels are ahead of cuda-oxide on GPU time for
-bias + GELU, level on layer norm, 2.2× behind on matrix multiply and 1.5× behind
-on triangle contraction, with the retained matmul tile chosen by a
-twelve-configuration sweep. The launch path, autotuning and the lower-precision
-contracts remain open; see [Open work](#open-work).
+Status: **all five operations are ported and measured** (2026-09-10). The toolkit
+gate passed, `examples/cutile` builds and runs, and
+[mage-004](../experiments/mage-004.md) holds the values: the tile kernels are
+ahead of cuda-oxide on GPU time for bias + GELU, level on layer norm, 1.6× behind
+on matrix multiply, 1.4× on triangle contraction and 3.4× on neighbor
+aggregation. The matmul tile is the autotuner's 32 × 128 × 32, which beat the
+hand-picked sweep's 128 × 64 × 8 in both timing views. The launch path is
+measured; graphs for the other three kernels, tuning the triangle and neighbor
+tiles, and the lower-precision contracts remain open; see
+[Open work](#open-work).
 
 [cuTile Rust](https://github.com/NVlabs/cutile-rs) is NVlabs' second Rust-to-CUDA
 stack, alongside [cuda-oxide](https://github.com/NVlabs/cuda-oxide). Where
@@ -223,8 +225,8 @@ profiling commands next to the oxide ones.
 
 | Item | State | Next test |
 | --- | --- | --- |
-| The launch path | Measured: ~16 µs of host cost per awaited launch (~32 µs for matmul) against the SIMT runtime's 2–3 µs; batching and CUDA graph replay converge the span on kernel time, and all three implementations are now matched | Capture graphs for the other three kernels, which reject `--mode graph` today |
-| Autotuning | Done for matmul: `cutile::tune` over 36 tile candidates beat the hand-picked sweep's winner (137.28 against 189.44 µs single-launch) and is the shipped tile | Re-run the comparison with the tuned tile, and sweep the triangle and neighbor tiles, which were never tuned |
+| The launch path | Measured: 14–23 µs of host cost per awaited launch against the SIMT runtime's 2–3 µs; batching and CUDA graph replay converge the span on kernel time, and all three implementations are now matched | Capture graphs for the other three kernels, which reject `--mode graph` today |
+| Autotuning | Done for matmul: `cutile::tune` over 36 tile candidates beat the hand-picked sweep's winner (137.28 against 189.44 µs single-launch) and is the shipped tile; every table in mage-004 was then re-measured with it | Sweep the triangle and neighbor tiles, which were never tuned — neighbor is the track's weakest result |
 | Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
 
 ## Where the results live
