@@ -39,9 +39,11 @@ Per generation, one build and three paired measurements per round:
    between rounds; inputs are generated once, hashed, and reused;
 6. gate on the full-output comparison against the PyTorch FP32 reference before any
    timing is read;
-7. accept only if the candidate's worst round median beats the incumbent's best round
-   median by more than `--min-gain` (default 1%) **and** the committed control's round
-   medians stayed within `--control-drift` (default 3%);
+7. accept only if the median of the **paired per-round ratios** clears `--min-gain`
+   (default 1%) **and** the committed control's round medians stayed within
+   `--control-drift` (default 3%). Pairing matters: clock-boost excursions of about 10%
+   land on either arm, so a rule built on the fastest round of each arm can be carried by
+   a single boosted round, while a paired median is perturbed in one ratio out of R;
 8. append one ledger entry with the parameters, per-round numbers, correctness, decision
    and reason.
 
@@ -179,6 +181,87 @@ The search space is now verified as a set: 40 combinations of block, staging lay
 staging mode and k_step are all correct at 256x256x128, and the layernorm family is
 correct across its whole knob set.
 
+## Kernel time: does the event-span win survive the published instrument?
+
+The mage-001..003 records are GPU kernel time from Nsight Systems captures, so the
+retained configuration was re-measured with that instrument before any comparison with
+them. `scripts/evolve_capture.py` reuses the harness path of
+`examples/oxide/profile_suite.py` (`NsysBackend`, `capture_range="cuda"`, the binary's own
+`--capture` bracket), captures 100 iterations per arm, interleaves the arms, and asserts
+that both arms received byte-identical inputs.
+
+**The committed kernel reproduced the published record**: 80.2-80.6 µs per iteration
+against mage-003's 80.00 µs. The retained configuration measured **76.29 µs, 0.951 of the
+committed kernel — a 4.9% improvement in GPU kernel time**, not only in the event span.
+
+It is an interaction, not a single knob. Each row below is one paired capture session at
+1024³ FP32, kernel microseconds per iteration, arms interleaved:
+
+| staging structure | `k_step` | kernel µs | vs committed |
+| --- | ---: | ---: | ---: |
+| `shared` (the committed kernel) | 64 | 80.31 | 1.000 |
+| `exact` (guard-free, one loop) | 64 | 80.29 | 0.999 |
+| `exact` | 32 | 82.43 | 1.028 |
+| `guarded` (one branch per tile) | 64 | 82.97 | 1.034 |
+| `guarded` | 32 | **76.29** | **0.951** |
+
+`k_step` 32 is *slower* in the guard-free structure (+2.6%, the direction the published
+32 -> 64 step recorded) and *faster* in the guarded structure (-8.0%); guarded staging at
+`k_step` 64 is itself slower than the committed kernel. Neither knob alone explains the
+result and the loop could not have reached it by measuring either alone — the accepted
+steps were three single-knob changes in sequence, and only the combination pays.
+
+One session disagreed. The first capture ran about sixty times slower than every later
+one (846 s against 14 s for the same work) and read the retained arm at 80.4 µs with the
+committed arm normal at 79.2-80.3 µs, which would have meant no kernel-time gain at all.
+Four later sessions, each with its own build, agreed with each other at 74.8-76.5 µs for
+the retained arm, and the structural comparisons above reproduce inside single sessions.
+The anomalous session is recorded here rather than dropped:
+`docs/assets/results/evolution-loop/kernel-time/`.
+
+### The same-session comparison
+
+Triton's published matmul value swings 71.94-83.78 µs between sessions, so a cross-session
+comparison says nothing. Capturing all four implementations in one session
+(`scripts/evolve_capture.py --triton --pytorch`, three interleaved rounds of 100 iterations):
+
+| implementation | rounds (µs/iter) | median |
+| --- | --- | ---: |
+| Rust, committed (`tiled_matmul_registers`) | 81.00, 79.24, 79.76 | 79.76 |
+| **Rust, retained (the loop's configuration)** | 76.34, 76.34, 75.95 | **76.34** |
+| Triton (`matrix_kernel`) | 88.95, 80.04, 84.51 | 84.51 |
+| PyTorch -> cuBLAS (`cutlass simt sgemm 128x64`) | 49.88, 43.51, 50.54 | 49.88 |
+
+Within this session the retained kernel is 0.957 of the committed one and was faster than
+Triton in every round, including against Triton's best round (79.9 against 76.3). cuBLAS is
+still 1.53x ahead, and it is the only arm whose own spread (43.5-50.5) rivals the
+differences being discussed, so its position should be re-measured before it is quoted as a
+target.
+
+### The hand-written pipeline arrived, and it is faster
+
+A double-buffered `cp.async` matmul (`tiled_matmul_pipeline`, PR #49) landed in the
+committed kernels after this branch was opened; the host selects it for this shape. Captured
+against it in one session, three interleaved rounds of 100 iterations:
+
+| implementation | rounds (µs/iter) | median |
+| --- | --- | ---: |
+| Rust, committed (`tiled_matmul_pipeline`) | 69.02, 68.76, 68.44 | **68.76** |
+| Rust, the loop's configuration | 77.09, 76.25, 76.09 | 76.25 |
+| Triton | 79.32, 86.22, 86.50 | 86.22 |
+| PyTorch -> cuBLAS | 49.26, 50.50, 56.03 | 50.50 |
+
+The pipeline is 11% faster than the configuration the loop retained (68.76 against 76.25)
+and 13.8% faster than the kernel it replaced (79.76 µs in the session above). **On this
+shape the loop's result is superseded.** What survives is the diagnosis it produced: the
+difference between two structures whose copies are issued the same way in different orders
+pointed at the staging latency, and the pipelined kernel is what that points at. Two
+consecutive issues made the same point — a library-style overlap of the global-to-shared
+copies was worth more than any further rearrangement of the tiles.
+
+The generated space has no `cp.async` form, so the loop cannot yet be asked to tune inside
+the pipelined structure; that is the first thing to add.
+
 ## LayerNorm: a null result
 
 The same loop on layer normalization (`--op layernorm`, starting from the committed
@@ -209,10 +292,10 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
 ## What the loop does not establish
 
 - One shape (1024³), one dtype (FP32), one GPU (RTX 4090, unlocked clocks, WSL).
-- The retained number is a **CUDA event span around the call**, which includes host
-  submission; it is not the GPU kernel duration that the mage-001..003 records use. The
-  `k_step 32` result in particular needs its own Nsight capture before it can be compared
-  with the published 80.0 µs kernel time.
+- The retained configuration is measured in both instruments now: 0.951 of the committed
+  kernel in GPU kernel time (Nsight, three paired captures) and a median +2.47% in event
+  span over eight paired rounds. It is still one shape (1024³), one dtype (FP32), one GPU,
+  and it has no Triton pairing inside a session.
 - No hardware counters were available, so no bounded-resource explanation accompanies the
   accepted steps; the loop reports what changed and by how much, not why.
 - Coordinate descent proposes one knob at a time. Coupled moves (a larger tile needs a
@@ -235,7 +318,17 @@ Ledger and summary: `docs/assets/results/evolution-loop/layernorm-ledger.jsonl` 
 
 - Make the confirmation step use warm-up pairs and more rounds, so a run cannot quote a
   gain its own protocol inflated.
-- Nsight-capture the retained configuration so the claim can be stated in kernel time.
+- Explain the interaction. Guarded staging with `k_step` 32 is 4.3% faster than the
+  committed kernel while either half alone is slower; the arms differ only in the guard
+  branches around the two staging blocks and in the pass count, so a counter capture
+  (issue slots, memory throughput, occupancy) should be able to say which resource the
+  combination buys.
+- Add a `cp.async` staging form to the generated templates, so the loop can search inside
+  the pipelined structure (buffer count, step depth, copy widths) instead of only the
+  synchronous one.
+- Close the distance to cuBLAS (50.50 against 68.76 µs for the pipelined kernel). The
+  library kernel's own spread is as wide as some of the gaps being discussed, so pair the
+  arms before quoting; split-K is the lever not yet tried here.
 - Feed the loop the profiler's own output (Mage already captures Systems and Compute
   reports) so proposals can be diagnosis-driven rather than order-driven.
 - Let the proposer write structure, not just constants: the generated source is already

@@ -1,0 +1,165 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"guarded\",\"thread_tile\":[4,4],\"transpose_a\":true}",
+    "triton": "examples/oxide/triton_target.py, fixed tiles",
+    "pytorch": "examples/oxide/python_target.py, library matmul"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "099d1fecb3ec500cc122c18269dee5498a5e4566dd66aaa024b8068e19ea2dc8",
+  "median_per_iteration_us": {
+    "committed": 79.76421,
+    "retained": 76.33618,
+    "triton": 84.50564,
+    "pytorch": 49.882250000000006
+  },
+  "ratio_retained_over_committed": 0.9570229555335656,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8099.86,
+      "per_iteration_us": 80.9986,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7633.618,
+      "per_iteration_us": 76.33618,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8895.359,
+      "per_iteration_us": 88.95359,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r1/triton"
+    },
+    {
+      "round": 1,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 4988.225,
+      "per_iteration_us": 49.882250000000006,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r1/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7633.67,
+      "per_iteration_us": 76.33670000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8003.752,
+      "per_iteration_us": 80.03752,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r2/triton"
+    },
+    {
+      "round": 2,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 4350.726,
+      "per_iteration_us": 43.507259999999995,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r2/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 7923.822,
+      "per_iteration_us": 79.23822,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "matrix_kernel"
+      ],
+      "total_us": 8450.564,
+      "per_iteration_us": 84.50564,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r3/triton"
+    },
+    {
+      "round": 3,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void cutlass::Kernel2<cutlass_80_simt_sgemm_128x64_8x5_nn_align1>(T1::Params)"
+      ],
+      "total_us": 5053.784,
+      "per_iteration_us": 50.537839999999996,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r3/pytorch"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 7976.421,
+      "per_iteration_us": 79.76421,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7594.816,
+      "per_iteration_us": 75.94816,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-four-arm/r3/retained"
+    }
+  ]
+}

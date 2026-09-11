@@ -1,0 +1,130 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"guarded\",\"thread_tile\":[4,4],\"transpose_a\":true}",
+    "compare": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"exact\",\"thread_tile\":[4,4],\"transpose_a\":true}"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "9e64db528566b81452e4ccc19301b7424fb7e44f6b8433098d03237f23ed3092",
+  "median_per_iteration_us": {
+    "committed": 80.30468,
+    "retained": 76.35362,
+    "compare": 82.43397
+  },
+  "ratio_retained_over_committed": 0.9507991315076532,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8030.468,
+      "per_iteration_us": 80.30468,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7635.362,
+      "per_iteration_us": 76.35362,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "compare",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_new"
+      ],
+      "total_us": 8243.397,
+      "per_iteration_us": 82.43397,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r1/compare"
+    },
+    {
+      "round": 2,
+      "arm": "compare",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_new"
+      ],
+      "total_us": 8262.699,
+      "per_iteration_us": 82.62699,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r2/compare"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7638.528,
+      "per_iteration_us": 76.38528000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8035.816,
+      "per_iteration_us": 80.35816,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 7923.256,
+      "per_iteration_us": 79.23256,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7530.503,
+      "per_iteration_us": 75.30503,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r3/retained"
+    },
+    {
+      "round": 3,
+      "arm": "compare",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_new"
+      ],
+      "total_us": 8170.211,
+      "per_iteration_us": 81.70211,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-guarded-vs-exact/r3/compare"
+    }
+  ]
+}

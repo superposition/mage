@@ -1,0 +1,164 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "layernorm",
+  "shape": [
+    4096,
+    768
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"threads\":256,\"warps_per_row\":2}",
+    "triton": "examples/oxide/triton_target.py, fixed tiles",
+    "pytorch": "examples/oxide/python_target.py, library matmul"
+  },
+  "input_hashes": {
+    "a.bin": "b89c38621e7d6e9ac33414086c3c69b15b6e4ffd4607341836ee8ff8bdaca747",
+    "b.bin": "da01bb733ecc6b034ccc7daff509debc4132a1645a782cd86fefca49ab713200"
+  },
+  "candidates_sha256": "398afbb6ec4622b8c3947bc4fe8dcba245435f68e1d487cd6b1235f4ac83eb28",
+  "median_per_iteration_us": {
+    "committed": 8.84202,
+    "retained": 10.34505,
+    "triton": 8.2311,
+    "pytorch": 11.922139999999999
+  },
+  "ratio_retained_over_committed": 1.1699871748763293,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "layer_norm_row"
+      ],
+      "total_us": 877.043,
+      "per_iteration_us": 8.77043,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "layernorm_best"
+      ],
+      "total_us": 1013.288,
+      "per_iteration_us": 10.13288,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r1/retained"
+    },
+    {
+      "round": 1,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "norm_kernel"
+      ],
+      "total_us": 800.205,
+      "per_iteration_us": 8.00205,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r1/triton"
+    },
+    {
+      "round": 1,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void at::native::<unnamed>::vectorized_layer_norm_kernel<float, float, (bool)0>(int, T2, const T1 *, const T1 *, const T1 *, T2 *, T2 *, T1 *)"
+      ],
+      "total_us": 1953.214,
+      "per_iteration_us": 19.53214,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r1/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "layernorm_best"
+      ],
+      "total_us": 1034.505,
+      "per_iteration_us": 10.34505,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "norm_kernel"
+      ],
+      "total_us": 828.84,
+      "per_iteration_us": 8.288400000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r2/triton"
+    },
+    {
+      "round": 2,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void at::native::<unnamed>::vectorized_layer_norm_kernel<float, float, (bool)0>(int, T2, const T1 *, const T1 *, const T1 *, T2 *, T2 *, T1 *)"
+      ],
+      "total_us": 1121.738,
+      "per_iteration_us": 11.21738,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r2/pytorch"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "layer_norm_row"
+      ],
+      "total_us": 884.202,
+      "per_iteration_us": 8.84202,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "triton",
+      "launches": 100,
+      "kernel_names": [
+        "norm_kernel"
+      ],
+      "total_us": 823.11,
+      "per_iteration_us": 8.2311,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r3/triton"
+    },
+    {
+      "round": 3,
+      "arm": "pytorch",
+      "launches": 100,
+      "kernel_names": [
+        "void at::native::<unnamed>::vectorized_layer_norm_kernel<float, float, (bool)0>(int, T2, const T1 *, const T1 *, const T1 *, T2 *, T2 *, T1 *)"
+      ],
+      "total_us": 1192.214,
+      "per_iteration_us": 11.922139999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r3/pytorch"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "layer_norm_row"
+      ],
+      "total_us": 893.14,
+      "per_iteration_us": 8.9314,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "layernorm_best"
+      ],
+      "total_us": 1041.267,
+      "per_iteration_us": 10.41267,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-006-layernorm/r3/retained"
+    }
+  ]
+}
