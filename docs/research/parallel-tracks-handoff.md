@@ -8,10 +8,16 @@ Coordination index and protocols: mage issue #53. Open performance gaps: issues 
 
 | Track | Lanes it owns | Worktree and branch | Published record |
 | --- | --- | --- | --- |
-| cuda-oxide kernel optimisation | `examples/oxide/src/main.rs` kernels, `examples/oxide/*` harness targets, `scripts/plot-comparison.py` | `/home/superposition/code/mage-perf` (detached or its own branch) | mage-006 (#58) |
-| cuTile Rust | `examples/cutile/**`, `docs/research/cutile-rust.md` | `/home/superposition/code/mage-cutile` (`feat/cutile-rust`, #55 merged) | mage-004 (#55) |
+| cuda-oxide kernel optimisation | `examples/oxide/src/main.rs` kernels, `examples/oxide/*` harness targets, `scripts/plot-comparison.py` | **Reassigned 11 September**: its agent exited with the lane unowned. Now held by the cuTile track (`/home/superposition/code/mage-cutile`); build in `mage-perf` and publish as a new record rather than amending mage-006 | mage-006 (#58) |
+| cuTile Rust | `examples/cutile/**`, `docs/research/cutile-rust.md` | `/home/superposition/code/mage-cutile` (`feat/cutile-rust`, #55 merged) | mage-004 (#55; [field note](https://superposition.github.io/mage/experiments/mage-004/) and [journal entry](https://superposition.github.io/journal/tiles-the-compiler-chose/) live) |
 | Closed measurement loop | `scripts/evolve*.py`, `examples/oxide/src/candidates.rs`, `tests/test_evolution.py`, and the `committed_kernel` hooks in `examples/oxide/src/main.rs` | `/home/superposition/code/mage-oxide` (all merged: #48, #51, #57) | mage-005 (#50 merged; journal entry and field note are live) |
 | Publication | `docs/experiments/**`, `docs/assets/{results,figures}/**`, blog posts | one worktree per stage record | mage-002, 003, 006 (#45, #46/#47, #58) |
+
+The kernel lane's reassignment is recorded here rather than assumed: its ranked gaps
+are unchanged (wide-row LayerNorm first, then GELU and neighbor, then matmul against
+cuBLAS — issue #54 and #59), and mage-006 stays as that agent left it. The loop track
+keeps the `committed_kernel` hooks and the generated surface; nobody owns the
+committed kernels until this line says so.
 
 `docs/experiments/index.md` is an append-only list shared by every record. Expect a conflict there whenever two records land close together; the resolution is to keep both entries in order.
 
