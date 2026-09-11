@@ -107,6 +107,26 @@ The batch sweep does not improve monotonically on matrix multiply (batch 1 → 1
 tile shape that kernel is long enough to hide submission, so batching only
 matters where the kernel is short.
 
+### Replay, and the end of the launch-path gap
+
+The third mode captures N kernel nodes into one CUDA graph and replays it behind
+a single event pair (`--mode graph --batch N`, implemented for matrix multiply
+and bias + GELU — the kernels that bracket the range). Median µs per kernel
+execution, same 100 samples after 25 warmup launches:
+
+| Operation | single | batch:10 | batch:100 | graph:10 | graph:25 | kernel |
+| --- | --- | --- | --- | --- | --- | --- |
+| Matrix multiplication 1024³ | 188.42 | 175.67 | 183.69 | **161.77** | 182.10 | 172.52 |
+| Bias + GELU 4096×768 | 24.91 | 8.91 | 9.82 | 8.67 | **7.73** | 7.97 |
+
+Replay is the best mode for both: bias + GELU lands at 7.73 µs against a 7.97 µs
+kernel, so the host cost that dominated the single-launch column is gone
+entirely, and matrix multiply's replayed span sits below its kernel time because
+capture removes per-launch submission from the critical path. Batching and
+replay are within noise of each other on these shapes; what both establish is
+that the span column's tile-runtime penalty is a submission artifact rather than
+a property of the kernels.
+
 ## Correctness
 
 Every value in both tables passed the full-element check on every round. Worst
@@ -201,12 +221,12 @@ hatch the plan anticipated, and it is why it was ported last.
 
 ## Open items
 
-1. **CUDA graph replay** is the one launch mode still unmeasured. Batching is
-   done (above) and answers the span question; a graph would tell whether replay
-   removes the remaining per-launch cost for the short kernels.
-2. **The other implementations' launch paths** are still single-launch in the
+1. **The other implementations' launch paths** are still single-launch in the
    span table: PyTorch and Triton await each call there, so matching all three
-   would mean timing them batched too.
+   would mean timing them batched and replayed too.
+2. **Graphs for the other three kernels**: layer norm, triangle contraction and
+   neighbor aggregation reject `--mode graph` today; each needs its own capture
+   because a graph is recorded per launch shape.
 3. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
    `cutile::tune` ships an experimental autotuner that would search it properly,
    and the same question applies to the triangle and neighbor tiles, which were

@@ -387,6 +387,10 @@ impl Drop for Capture {
 enum Mode {
     Single,
     Batch(usize),
+    /// One graph launch holding N kernel nodes, one event pair per replay. This
+    /// is the third launch mode the research plan asks for; it is implemented
+    /// for the two kernels that bracket the range, matmul and bias + GELU.
+    Graph(usize),
 }
 
 impl Mode {
@@ -394,6 +398,7 @@ impl Mode {
         match self {
             Mode::Single => "single".to_string(),
             Mode::Batch(n) => format!("batch:{n}"),
+            Mode::Graph(n) => format!("graph:{n}"),
         }
     }
 }
@@ -432,20 +437,24 @@ impl Harness {
         if capture_requested {
             capture.start()?;
         }
-        let batch = match mode {
-            Mode::Single => 1,
-            Mode::Batch(n) => n.max(1),
+        // `queued` launches are submitted per sample, and each sample divides by
+        // how many kernel executions it holds: one for a single launch, N for a
+        // batch of N, N for one replay of an N-node graph.
+        let (queued, divisor) = match mode {
+            Mode::Single => (1, 1),
+            Mode::Batch(n) => (n.max(1), n.max(1)),
+            Mode::Graph(n) => (1, n.max(1)),
         };
         for _ in 0..iterations {
             start.record(&self.stream)?;
-            for _ in 0..batch {
+            for _ in 0..queued {
                 // Only the single-launch measurement waits; a batch queues the
                 // launches and lets one event pair price all of them.
-                launch(batch == 1)?;
+                launch(queued == 1)?;
             }
             end.record(&self.stream)?;
             end.synchronize()?;
-            samples.push(start.elapsed_time(&end)? as f64 * 1000.0 / batch as f64);
+            samples.push(start.elapsed_time(&end)? as f64 * 1000.0 / divisor as f64);
         }
         if capture_requested {
             capture.stop()?;
@@ -521,6 +530,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 mode = match value.as_str() {
                     "single" => Mode::Single,
                     "batch" => Mode::Batch(10),
+                    "graph" => Mode::Graph(10),
                     other => return Err(format!("unknown mode {other}").into()),
                 };
             }
@@ -529,7 +539,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if count == 0 || count > 10000 {
                     return Err("batch size must be in 1..=10000".into());
                 }
-                mode = Mode::Batch(count);
+                // The count applies to whichever repeatable mode is in effect:
+                // nodes in one graph, or launches queued between two events.
+                mode = match mode {
+                    Mode::Graph(_) => Mode::Graph(count),
+                    _ => Mode::Batch(count),
+                };
             }
             _ => return Err(format!("unknown argument {arg}").into()),
         }
@@ -604,27 +619,52 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mo
         tile_k.to_string(),
         k_pad.to_string(),
     ];
-    let samples = harness.time(
-        manifest.warmup,
-        manifest.iterations,
-        capture_requested,
-        mode,
-        &mut |wait: bool| {
-            let launcher = kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
-                .generics(generics.clone())
-                .generics(generics.clone());
-            if wait {
-                launcher.sync_on(stream)?;
-            } else {
-                // SAFETY: the buffers this launcher borrows outlive the queued work, and
-                // the caller synchronizes on the end event before reading any of
-                // them. Dropping the returned future only means this launch is
-                // not awaited on its own.
-                unsafe { launcher.async_on(stream) }?;
-            }
-            Ok(())
-        },
-    )?;
+    let samples = match mode {
+        Mode::Graph(count) => {
+            // One graph holds `count` identical kernel nodes over the same
+            // buffers, so a replay executes the kernel `count` times and the
+            // sample divides by that. Capture itself runs no GPU work.
+            let graph = CudaGraph::scope(stream, |scope| {
+                for _ in 0..count {
+                    scope.record(
+                        kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
+                            .generics(generics.clone()),
+                    )?;
+                }
+                Ok(())
+            })?;
+            harness.time(
+                manifest.warmup,
+                manifest.iterations,
+                capture_requested,
+                mode,
+                &mut |_wait: bool| {
+                    graph.launch().sync_on(stream)?;
+                    Ok(())
+                },
+            )?
+        }
+        _ => harness.time(
+            manifest.warmup,
+            manifest.iterations,
+            capture_requested,
+            mode,
+            &mut |wait: bool| {
+                let launcher = kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
+                    .generics(generics.clone());
+                if wait {
+                    launcher.sync_on(stream)?;
+                } else {
+                    // SAFETY: the buffers this launcher borrows outlive the queued work,
+                    // and the caller synchronizes on the end event before reading any
+                    // of them. Dropping the returned future only means this launch is
+                    // not awaited on its own.
+                    unsafe { launcher.async_on(stream) }?;
+                }
+                Ok(())
+            },
+        )?,
+    };
 
     let host: Vec<f32> = z.to_host_vec().sync_on(stream)?;
     let mut result = Vec::with_capacity(product(&[m, n])?);
@@ -664,35 +704,65 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool, mode:
         .into();
     let mut y: Tensor<f32> = api::zeros::<f32>(&[rows_pad, width_pad]).sync_on(stream)?;
     let generics = vec![GELU_ROWS.to_string(), GELU_COLS.to_string()];
-    let samples = harness.time(
-        manifest.warmup,
-        manifest.iterations,
-        capture_requested,
-        mode,
-        &mut |wait: bool| {
-            let launcher = kernels::bias_gelu(
-                (&mut y).partition([GELU_ROWS, GELU_COLS]),
-                &x,
-                &bias_dev,
-                0.044715f32,
-                0.7978845608f32,
-                0.5f32,
-                1.0f32,
-            )
-            .generics(generics.clone())
-            .generics(generics.clone());
-            if wait {
-                launcher.sync_on(stream)?;
-            } else {
-                // SAFETY: the buffers this launcher borrows outlive the queued work, and
-                // the caller synchronizes on the end event before reading any of
-                // them. Dropping the returned future only means this launch is
-                // not awaited on its own.
-                unsafe { launcher.async_on(stream) }?;
-            }
-            Ok(())
-        },
-    )?;
+    let samples = match mode {
+        Mode::Graph(count) => {
+            let graph = CudaGraph::scope(stream, |scope| {
+                for _ in 0..count {
+                    scope.record(
+                        kernels::bias_gelu(
+                            (&mut y).partition([GELU_ROWS, GELU_COLS]),
+                            &x,
+                            &bias_dev,
+                            0.044715f32,
+                            0.7978845608f32,
+                            0.5f32,
+                            1.0f32,
+                        )
+                        .generics(generics.clone()),
+                    )?;
+                }
+                Ok(())
+            })?;
+            harness.time(
+                manifest.warmup,
+                manifest.iterations,
+                capture_requested,
+                mode,
+                &mut |_wait: bool| {
+                    graph.launch().sync_on(stream)?;
+                    Ok(())
+                },
+            )?
+        }
+        _ => harness.time(
+            manifest.warmup,
+            manifest.iterations,
+            capture_requested,
+            mode,
+            &mut |wait: bool| {
+                let launcher = kernels::bias_gelu(
+                    (&mut y).partition([GELU_ROWS, GELU_COLS]),
+                    &x,
+                    &bias_dev,
+                    0.044715f32,
+                    0.7978845608f32,
+                    0.5f32,
+                    1.0f32,
+                )
+                .generics(generics.clone());
+                if wait {
+                    launcher.sync_on(stream)?;
+                } else {
+                    // SAFETY: the buffers this launcher borrows outlive the queued work,
+                    // and the caller synchronizes on the end event before reading any
+                    // of them. Dropping the returned future only means this launch is
+                    // not awaited on its own.
+                    unsafe { launcher.async_on(stream) }?;
+                }
+                Ok(())
+            },
+        )?,
+    };
 
     let host: Vec<f32> = y.to_host_vec().sync_on(stream)?;
     let mut result = Vec::with_capacity(product(&[rows, width])?);
@@ -714,6 +784,9 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool, mode:
 /// dimensions must be powers of two, so the row is padded to the next power of
 /// two and the kernel divides by the true width.
 fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
+    if let Mode::Graph(_) = mode {
+        return Err("graph mode is implemented for matmul and gelu: the other kernels are captured              in one graph per launch shape, which is the next step".into());
+    }
     let (rows, width) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
     let gamma = read_f32(&dir.join("b.bin"), width)?;
@@ -751,7 +824,6 @@ fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool, mode
                 width as f32,
                 1e-5f32,
             )
-            .generics(generics.clone())
             .generics(generics.clone());
             if wait {
                 launcher.sync_on(stream)?;
@@ -783,6 +855,9 @@ fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool, mode
 }
 
 fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
+    if let Mode::Graph(_) = mode {
+        return Err("graph mode is implemented for matmul and gelu: the other kernels are captured              in one graph per launch shape, which is the next step".into());
+    }
     let (n, channels) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[n, n, channels])?)?;
     let b = read_f32(&dir.join("b.bin"), product(&[n, n, channels])?)?;
@@ -810,7 +885,6 @@ fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: 
         mode,
         &mut |wait: bool| {
             let launcher = kernels::triangle((&mut y).partition([tile, tile, 1]), &a_dev, &b_dev)
-                .generics(generics.clone())
                 .generics(generics.clone());
             if wait {
                 launcher.sync_on(stream)?;
@@ -854,6 +928,9 @@ fn neighbor_tile(width: usize) -> usize {
 }
 
 fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
+    if let Mode::Graph(_) = mode {
+        return Err("graph mode is implemented for matmul and gelu: the other kernels are captured              in one graph per launch shape, which is the next step".into());
+    }
     let (rows, width, edges) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
     let x = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
     let mut weights = read_f32(&dir.join("b.bin"), edges)?;
