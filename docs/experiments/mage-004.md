@@ -40,7 +40,7 @@ every measured launch, so compilation is outside the timed region.
 | Triangle contraction 128×32 | 61.11 | 107.83 | 165.22 | 83.5 |
 | Neighbor aggregation 4096×64×65536 | 98.46 | 28.07 | 62.12 | 12.9 |
 
-## GPU kernel time (µs per launch, single capture, 100 launches)
+## GPU kernel time (µs per operation, single capture, 100 calls)
 
 | Operation | PyTorch | Triton | cuTile Rust | cuda-oxide Rust (mage-003) |
 | --- | --- | --- | --- | --- |
@@ -73,6 +73,39 @@ launch-path comparison in
 [the research plan](../research/kernel-exploration.md) is what would separate
 them, and cuTile Rust can express all three modes it asks for (single launch, a
 batch divided by repetitions, and CUDA graph replay).
+
+### The launch path, measured
+
+The same launches, awaited one at a time versus queued ten at a time behind one
+event pair (`--mode single` and `--mode batch --batch 10`), median µs per launch,
+100 samples after 25 warmup launches, beside the kernel time from the capture
+above:
+
+| Operation | single | batch:10 | kernel |
+| --- | --- | --- | --- |
+| Matrix multiplication 1024³ | 192.45 | 160.46 | 172.52 |
+| Bias + GELU 4096×768 | 24.64 | 8.40 | 7.97 |
+| LayerNorm 4096×768 | 29.86 | 10.64 | 10.46 |
+| Triangle contraction 128×32 | 135.07 | 118.61 | 120.72 |
+| Neighbor aggregation 4096×64×65536 | 49.25 | 33.18 | 35.36 |
+
+The difference between the first two columns is what the host spent per launch
+while every launch was awaited: about 16 µs on the small operations and 32 µs on
+matrix multiply. Batched, the spans converge on the kernel time — bias + GELU and
+layer norm land within 0.5 µs of their kernels, and matrix multiply's batched
+span sits *below* its kernel time because submission overlaps execution.
+
+The cuda-oxide spans in the event table (13.3 µs for bias + GELU over an 11.0 µs
+kernel) put that runtime's per-launch host cost at 2–3 µs. So on these shapes the
+tile runtime's host path is roughly 7× the SIMT one's, and the event-span column
+above is inflated by exactly that difference. That is the answer to the question
+mage-002 left open, for the span view: the native advantage in the span column is
+a launch-path artifact, not a kernel one.
+
+The batch sweep does not improve monotonically on matrix multiply (batch 1 → 178.2,
+2 → 173.6, 5 → 173.9, 10 → 160.5, 25 → 184.5, 100 → 185.0 median µs): at this
+tile shape that kernel is long enough to hide submission, so batching only
+matters where the kernel is short.
 
 ## Correctness
 
@@ -168,14 +201,17 @@ hatch the plan anticipated, and it is why it was ported last.
 
 ## Open items
 
-1. **The launch path**: async device operations, batching and CUDA graph replay,
-   with warmup excluded. Until then the event-span column cannot separate a
-   slower runtime from a slower kernel.
-2. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
+1. **CUDA graph replay** is the one launch mode still unmeasured. Batching is
+   done (above) and answers the span question; a graph would tell whether replay
+   removes the remaining per-launch cost for the short kernels.
+2. **The other implementations' launch paths** are still single-launch in the
+   span table: PyTorch and Triton await each call there, so matching all three
+   would mean timing them batched too.
+3. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
    `cutile::tune` ships an experimental autotuner that would search it properly,
    and the same question applies to the triangle and neighbor tiles, which were
    never swept.
-3. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
+4. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
 ## Reproduction

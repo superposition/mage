@@ -223,7 +223,7 @@ profiling commands next to the oxide ones.
 
 | Item | State | Next test |
 | --- | --- | --- |
-| The launch path | Not measured: the harness serializes submission per iteration, which prices the lazy runtime's host work rather than its queueing | Single launch, a batch divided by repetitions, and CUDA graph replay, with warmup excluded |
+| The launch path | Partly measured: batching shows ~16 µs of host cost per awaited launch (~32 µs for matmul) against the SIMT runtime's 2–3 µs, and batched spans converge on kernel time | Extend the mode to CUDA graph replay, and time PyTorch and Triton batched so all three are matched |
 | Autotuning | Not used: the retained matmul tile came from twelve hand-picked configurations | `cutile::tune` over the same space, with the warm-up outside the timed region; the triangle and neighbor tiles were never swept at all |
 | Lower precision | Not measured | FP16/BF16/TF32 as separate contracts with their own error budgets |
 

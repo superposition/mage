@@ -376,6 +376,28 @@ impl Drop for Capture {
     }
 }
 
+/// How a launch is priced.
+///
+/// `Single` waits for each launch and brackets it with one event pair, which is
+/// the measurement the earlier rounds use. `Batch` queues N launches behind one
+/// event pair and divides, so the span covers the device's queue instead of the
+/// host's submission path. The two together separate the kernel from the launch
+/// path, which is the question mage-002 left open.
+#[derive(Clone, Copy)]
+enum Mode {
+    Single,
+    Batch(usize),
+}
+
+impl Mode {
+    fn label(self) -> String {
+        match self {
+            Mode::Single => "single".to_string(),
+            Mode::Batch(n) => format!("batch:{n}"),
+        }
+    }
+}
+
 struct Harness {
     device: Arc<Device>,
     stream: Arc<Stream>,
@@ -396,10 +418,11 @@ impl Harness {
         warmup: usize,
         iterations: usize,
         capture_requested: bool,
-        launch: &mut dyn FnMut() -> Result<(), Box<dyn Error>>,
+        mode: Mode,
+        launch: &mut dyn FnMut(bool) -> Result<(), Box<dyn Error>>,
     ) -> Result<Vec<f64>, Box<dyn Error>> {
         for _ in 0..warmup {
-            launch()?;
+            launch(true)?;
         }
         unsafe { self.stream.synchronize() }?;
         let start = self.device.new_event()?;
@@ -409,12 +432,20 @@ impl Harness {
         if capture_requested {
             capture.start()?;
         }
+        let batch = match mode {
+            Mode::Single => 1,
+            Mode::Batch(n) => n.max(1),
+        };
         for _ in 0..iterations {
             start.record(&self.stream)?;
-            launch()?;
+            for _ in 0..batch {
+                // Only the single-launch measurement waits; a batch queues the
+                // launches and lets one event pair price all of them.
+                launch(batch == 1)?;
+            }
             end.record(&self.stream)?;
             end.synchronize()?;
-            samples.push(start.elapsed_time(&end)? as f64 * 1000.0);
+            samples.push(start.elapsed_time(&end)? as f64 * 1000.0 / batch as f64);
         }
         if capture_requested {
             capture.stop()?;
@@ -478,12 +509,28 @@ fn run() -> Result<(), Box<dyn Error>> {
     let dir = Path::new(&directory);
     let mut manifest: Manifest = serde_json::from_slice(&fs::read(dir.join("input.json"))?)?;
     let mut capture_requested = false;
+    let mut mode = Mode::Single;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--iterations" => {
                 manifest.iterations = args.next().ok_or("missing iteration count")?.parse()?
             }
             "--capture" => capture_requested = true,
+            "--mode" => {
+                let value = args.next().ok_or("missing mode")?;
+                mode = match value.as_str() {
+                    "single" => Mode::Single,
+                    "batch" => Mode::Batch(10),
+                    other => return Err(format!("unknown mode {other}").into()),
+                };
+            }
+            "--batch" => {
+                let count: usize = args.next().ok_or("missing batch size")?.parse()?;
+                if count == 0 || count > 10000 {
+                    return Err("batch size must be in 1..=10000".into());
+                }
+                mode = Mode::Batch(count);
+            }
             _ => return Err(format!("unknown argument {arg}").into()),
         }
     }
@@ -499,11 +546,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("invalid dimensions".into());
     }
     match manifest.op.as_str() {
-        "matmul" => run_matmul(dir, &manifest, capture_requested),
-        "gelu" => run_bias_gelu(dir, &manifest, capture_requested),
-        "layernorm" => run_layer_norm(dir, &manifest, capture_requested),
-        "triangle" => run_triangle(dir, &manifest, capture_requested),
-        "neighbor" => run_neighbor(dir, &manifest, capture_requested),
+        "matmul" => run_matmul(dir, &manifest, capture_requested, mode),
+        "gelu" => run_bias_gelu(dir, &manifest, capture_requested, mode),
+        "layernorm" => run_layer_norm(dir, &manifest, capture_requested, mode),
+        "triangle" => run_triangle(dir, &manifest, capture_requested, mode),
+        "neighbor" => run_neighbor(dir, &manifest, capture_requested, mode),
         other => Err(format!("operation {other} is not one of the five measured operations").into()),
     }
 }
@@ -527,7 +574,7 @@ fn matmul_tiles() -> (usize, usize, usize) {
     }
 }
 
-fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
     let (tile_m, tile_n, tile_k) = matmul_tiles();
     let (m, n, k) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
     let a = read_f32(&dir.join("a.bin"), product(&[m, k])?)?;
@@ -561,10 +608,20 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Resul
         manifest.warmup,
         manifest.iterations,
         capture_requested,
-        &mut || {
-            let _ = kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
+        mode,
+        &mut |wait: bool| {
+            let launcher = kernels::matmul((&mut z).partition([tile_m, tile_n]), &x, &y)
                 .generics(generics.clone())
-                .sync_on(stream)?;
+                .generics(generics.clone());
+            if wait {
+                launcher.sync_on(stream)?;
+            } else {
+                // SAFETY: the buffers this launcher borrows outlive the queued work, and
+                // the caller synchronizes on the end event before reading any of
+                // them. Dropping the returned future only means this launch is
+                // not awaited on its own.
+                unsafe { launcher.async_on(stream) }?;
+            }
             Ok(())
         },
     )?;
@@ -580,14 +637,14 @@ fn run_matmul(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Resul
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"m": tile_m, "n": tile_n, "k": tile_k},
+        serde_json::json!({"mode": mode.label(), "tiles": {"m": tile_m, "n": tile_n, "k": tile_k},
                            "padded": [m_pad, n_pad, k_pad]}),
     )
 }
 
 /// Bias + GELU over rows: the column tile is fixed and the tensor is padded up
 /// to it, so every row uses one specialization.
-fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
     let (rows, width) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
     let bias = read_f32(&dir.join("b.bin"), width)?;
@@ -611,8 +668,9 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Re
         manifest.warmup,
         manifest.iterations,
         capture_requested,
-        &mut || {
-            let _ = kernels::bias_gelu(
+        mode,
+        &mut |wait: bool| {
+            let launcher = kernels::bias_gelu(
                 (&mut y).partition([GELU_ROWS, GELU_COLS]),
                 &x,
                 &bias_dev,
@@ -622,7 +680,16 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Re
                 1.0f32,
             )
             .generics(generics.clone())
-            .sync_on(stream)?;
+            .generics(generics.clone());
+            if wait {
+                launcher.sync_on(stream)?;
+            } else {
+                // SAFETY: the buffers this launcher borrows outlive the queued work, and
+                // the caller synchronizes on the end event before reading any of
+                // them. Dropping the returned future only means this launch is
+                // not awaited on its own.
+                unsafe { launcher.async_on(stream) }?;
+            }
             Ok(())
         },
     )?;
@@ -638,7 +705,7 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Re
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"rows": GELU_ROWS, "cols": GELU_COLS},
+        serde_json::json!({"mode": mode.label(), "tiles": {"rows": GELU_ROWS, "cols": GELU_COLS},
                            "padded": [rows_pad, width_pad]}),
     )
 }
@@ -646,7 +713,7 @@ fn run_bias_gelu(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Re
 /// Layer normalization, one row per program. The row must be one tile and tile
 /// dimensions must be powers of two, so the row is padded to the next power of
 /// two and the kernel divides by the true width.
-fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
     let (rows, width) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
     let gamma = read_f32(&dir.join("b.bin"), width)?;
@@ -674,8 +741,9 @@ fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool) -> R
         manifest.warmup,
         manifest.iterations,
         capture_requested,
-        &mut || {
-            let _ = kernels::layer_norm(
+        mode,
+        &mut |wait: bool| {
+            let launcher = kernels::layer_norm(
                 (&mut y).partition([1, width_pad]),
                 &x,
                 &gamma_dev,
@@ -684,7 +752,16 @@ fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool) -> R
                 1e-5f32,
             )
             .generics(generics.clone())
-            .sync_on(stream)?;
+            .generics(generics.clone());
+            if wait {
+                launcher.sync_on(stream)?;
+            } else {
+                // SAFETY: the buffers this launcher borrows outlive the queued work, and
+                // the caller synchronizes on the end event before reading any of
+                // them. Dropping the returned future only means this launch is
+                // not awaited on its own.
+                unsafe { launcher.async_on(stream) }?;
+            }
             Ok(())
         },
     )?;
@@ -700,12 +777,12 @@ fn run_layer_norm(dir: &Path, manifest: &Manifest, capture_requested: bool) -> R
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"rows": 1, "cols": width_pad},
+        serde_json::json!({"mode": mode.label(), "tiles": {"rows": 1, "cols": width_pad},
                            "padded": [rows, width_pad]}),
     )
 }
 
-fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
     let (n, channels) = (manifest.dims[0], manifest.dims[1]);
     let a = read_f32(&dir.join("a.bin"), product(&[n, n, channels])?)?;
     let b = read_f32(&dir.join("b.bin"), product(&[n, n, channels])?)?;
@@ -730,10 +807,20 @@ fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
         manifest.warmup,
         manifest.iterations,
         capture_requested,
-        &mut || {
-            let _ = kernels::triangle((&mut y).partition([tile, tile, 1]), &a_dev, &b_dev)
+        mode,
+        &mut |wait: bool| {
+            let launcher = kernels::triangle((&mut y).partition([tile, tile, 1]), &a_dev, &b_dev)
                 .generics(generics.clone())
-                .sync_on(stream)?;
+                .generics(generics.clone());
+            if wait {
+                launcher.sync_on(stream)?;
+            } else {
+                // SAFETY: the buffers this launcher borrows outlive the queued work, and
+                // the caller synchronizes on the end event before reading any of
+                // them. Dropping the returned future only means this launch is
+                // not awaited on its own.
+                unsafe { launcher.async_on(stream) }?;
+            }
             Ok(())
         },
     )?;
@@ -752,7 +839,7 @@ fn run_triangle(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"i": tile, "j": tile, "channels": channels},
+        serde_json::json!({"mode": mode.label(), "tiles": {"i": tile, "j": tile, "channels": channels},
                            "padded": [n_pad, n_pad, channels]}),
     )
 }
@@ -766,7 +853,7 @@ fn neighbor_tile(width: usize) -> usize {
     }
 }
 
-fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Result<(), Box<dyn Error>> {
+fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool, mode: Mode) -> Result<(), Box<dyn Error>> {
     let (rows, width, edges) = (manifest.dims[0], manifest.dims[1], manifest.dims[2]);
     let x = read_f32(&dir.join("a.bin"), product(&[rows, width])?)?;
     let mut weights = read_f32(&dir.join("b.bin"), edges)?;
@@ -822,8 +909,9 @@ fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
         manifest.warmup,
         manifest.iterations,
         capture_requested,
-        &mut || {
-            let _ = unsafe {
+        mode,
+        &mut |wait: bool| {
+            let launcher = unsafe {
                 kernels::neighbor(
                     (&mut y).partition([1, tile]),
                     &x_dev,
@@ -832,8 +920,15 @@ fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
                     indices_ptr,
                 )
             }
-            .generics(generics.clone())
-            .sync_on(stream)?;
+            .generics(generics.clone());
+            if wait {
+                launcher.sync_on(stream)?;
+            } else {
+                // SAFETY: the buffers this launcher borrows outlive the queued
+                // work, and the caller synchronizes on the end event before
+                // reading any of them.
+                unsafe { launcher.async_on(stream) }?;
+            }
             Ok(())
         },
     )?;
@@ -849,7 +944,7 @@ fn run_neighbor(dir: &Path, manifest: &Manifest, capture_requested: bool) -> Res
         capture_requested,
         &samples,
         &result,
-        serde_json::json!({"tiles": {"rows": 1, "cols": tile},
+        serde_json::json!({"mode": mode.label(), "tiles": {"rows": 1, "cols": tile},
                            "padded": [rows, width_pad],
                            "path": "raw pointers (load_ptr_tko)"}),
     )

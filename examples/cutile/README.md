@@ -26,8 +26,12 @@ cd ../..
 
 `--capture` brackets the measured region with the CUDA profiler API so an
 Nsight Systems capture contains only the timed launches; `--iterations N`
-overrides the manifest count. Each run retains its output and event samples in
-`rust-runs/<run-id>/`, with root files mirroring the latest run.
+overrides the manifest count. `--mode single` (the default) awaits every launch
+and brackets it with one event pair; `--mode batch --batch N` queues N launches
+behind one event pair and divides, which separates the kernel from the host
+submission path. Each run retains its output and event samples in
+`rust-runs/<run-id>/`, with root files mirroring the latest run, and the timing
+record names the mode it was taken with.
 
 ## Kernels
 
