@@ -305,9 +305,16 @@ hatch the plan anticipated, and it is why it was ported last.
 1. **Graphs for the other three kernels**: layer norm, triangle contraction and
    neighbor aggregation reject `--mode graph` today; each needs its own capture
    because a graph is recorded per launch shape.
-2. **Tune the triangle and neighbor tiles**: neither was ever swept, and the
-   neighbor kernel is the track's weakest result — 3.4× behind the hand-written
-   kernel at 35.37 µs.
+2. **Tune the triangle and neighbor tiles**: the triangle tile was swept after
+   this note was first written — `CUTILE_TRIANGLE_TILE` of 8 / 16 / 32 / 64, each
+   validating, median span 250.88 / 150.53 / **126.24** / 248.62 µs single-launch
+   and 266.37 / 134.55 / **110.90** / 278.99 batched — and 32, the shipped value,
+   is the optimum. The gap to the hand-written kernel is therefore not a tile
+   artifact. For neighbor the lever is elsewhere: at 4096 × 64 × 65536 the kernel
+   moves about 17 MB of gathered rows plus 1 MB of output in 35.37 µs, which is
+   L2-bandwidth work (the 4090's L2 is 24 MB), while the hand-written kernel does
+   it in 10.28 µs. One row per program with a serial edge loop leaves little to
+   overlap; several rows per program is the structural change to try.
 3. **Lower precision**: FP16/BF16/TF32 are separate contracts with their own
    error budgets; nothing here speaks to them.
 
