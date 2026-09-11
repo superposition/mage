@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#101217">
   {% seo %}
   {% feed_meta %}
+  <link rel="icon" type="image/svg+xml" href="{{ '/assets/mark/psi.svg' | relative_url }}">
+  <link rel="apple-touch-icon" href="{{ '/assets/mark/psi-180.png' | relative_url }}">
   <link rel="stylesheet" href="{{ '/assets/notebook.css' | relative_url }}">
   {% if page.profiles %}<script defer src="{{ '/assets/profile-comparison.js' | relative_url }}"></script>{% endif %}
   {% if page.mesh_band %}<script defer src="{{ '/assets/mesh-band.js' | relative_url }}"></script>{% endif %}
@@ -17,7 +19,12 @@
 <body>
   <a class="skip" href="#content">Skip to content</a>
   <header class="site-header wrap">
-    <a class="wordmark" href="{{ '/' | relative_url }}"><span class="mark" aria-hidden="true">∿</span> {{ site.title }}</a>
+    <a class="wordmark" href="{{ '/' | relative_url }}"><svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+  <path d="M 50 26.06 L 50 69.74 Z" fill="none" stroke="#edf0f5" stroke-width="7.14" stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <path d="M 50 38.24 L 20.6 18.5 L 50 44.12 Z" fill="none" stroke="#edf0f5" stroke-width="7.14" stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <path d="M 50 38.24 L 79.4 18.5 L 50 44.12 Z" fill="none" stroke="#edf0f5" stroke-width="7.14" stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+  <path d="M 50 69.74 L 50 84.02 Z" fill="none" stroke="#91dbba" stroke-width="7.14" stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="4"/>
+</svg> {{ site.title }}</a>
     <nav aria-label="Main navigation">
       {% for item in site.navigation %}<a href="{% if item.external %}{{ item.url }}{% else %}{{ item.url | relative_url }}{% endif %}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.title }}</a>{% endfor %}
     </nav>

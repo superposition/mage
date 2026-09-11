@@ -24,7 +24,7 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px 
 .wrap { width: min(1120px, calc(100% - 64px)); margin-inline: auto; }
 .site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 23px; border-bottom: 1px solid var(--rule); }
 .wordmark { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 17px; font-weight: 650; letter-spacing: -.4px; text-decoration: none; }
-.mark { display: inline-grid; place-items: center; width: 27px; height: 27px; border: 1px solid #657dab; border-radius: 7px; color: var(--accent); font-size: 23px; line-height: 1; }
+.mark { display: inline-grid; place-items: center; width: 27px; height: 27px; border: 1px solid #657dab; border-radius: 7px; color: var(--accent); }
 nav { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; }
 nav a { color: var(--muted); text-decoration: none; }
 nav a:hover, nav [aria-current] { color: var(--ink); }
