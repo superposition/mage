@@ -14,6 +14,7 @@ accept/reject, with the committed-kernel control as the drift guard.
 from __future__ import annotations
 
 import json
+import statistics
 from dataclasses import dataclass
 
 # A knob is frozen for the current incumbent after this many rejections, so the
@@ -65,15 +66,23 @@ def decide(
     """Apply the accept rule and return the recorded decision fields.
 
     Accept iff the candidate passed the correctness gate, the committed control
-    stayed within tolerance, and `min(new medians) < min(best medians) * (1 - min_gain)`.
-    `min` is deliberate: the fastest observed round is the least contaminated by
-    a clock excursion, and the same statistic is used on both arms.
+    stayed within tolerance, and the **median of the paired per-round ratios**
+    clears the gain threshold: `median(new[i] / best[i]) < 1 - min_gain`.
+
+    Pairing matters. The machine produces clock-boost excursions of about 10% that
+    land on either arm, so a rule built on the fastest round of each arm can be
+    carried by a single boosted round on one side, and a rule built on arm medians
+    can be carried by a boosted round anywhere in that arm. Pairing each round with
+    its own partner makes an excursion perturb one ratio instead of one arm, and the
+    median over rounds decides whether the shift is systematic. With a single round
+    the median is that round's ratio, so `--rounds 1` still works.
     """
     result = {
         "decision": "reject",
         "noisy": False,
         "control_drift": None,
         "ratio": None,
+        "ratios": [],
         "reason": "",
     }
     if not committed_medians:
@@ -95,8 +104,10 @@ def decide(
             f"(tolerance {control_tolerance:.2%}); re-measure before judging"
         )
         return result
-    ratio = min(float(m) for m in new_medians) / min(float(m) for m in best_medians)
+    ratios = [float(new) / float(best) for new, best in zip(new_medians, best_medians)]
+    ratio = statistics.median(ratios)
     result["ratio"] = ratio
+    result["ratios"] = ratios
     if ratio < 1.0 - min_gain:
         result["decision"] = "accept"
         result["reason"] = (

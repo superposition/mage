@@ -460,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
             "rounds": [],
             "correctness": {"passed": False, "max_abs_error": None},
             "control_drift": None,
+            "ratio": None,
+            "round_ratios": [],
             "noisy": False,
             "decision": "reject",
             "reason": "",
@@ -476,6 +478,17 @@ def main(argv: list[str] | None = None) -> int:
         def round_medians(variant: str) -> list[float]:
             key = f"{variant}_median_us"
             return [row[key] for row in entry["rounds"] if row.get(key) is not None]
+
+        def round_pairs() -> tuple[list[float], list[float]]:
+            """Both arms of every round that measured both, in round order."""
+            new_values: list[float] = []
+            best_values: list[float] = []
+            for row in entry["rounds"]:
+                new_value, best_value = row.get("new_median_us"), row.get("best_median_us")
+                if new_value is not None and best_value is not None:
+                    new_values.append(float(new_value))
+                    best_values.append(float(best_value))
+            return new_values, best_values
 
         try:
             # (b) validate both roles, then render both roles
@@ -565,10 +578,11 @@ def main(argv: list[str] | None = None) -> int:
                 }
 
             # (f) decision
+            paired_new, paired_best = round_pairs()
             verdict = policy.decide(
                 correctness_passed=entry["correctness"]["passed"] and not run_errors,
-                new_medians=round_medians("new"),
-                best_medians=round_medians("best"),
+                new_medians=paired_new,
+                best_medians=paired_best,
                 committed_medians=round_medians("committed"),
                 min_gain=args.min_gain,
                 control_tolerance=args.control_drift,
@@ -576,6 +590,9 @@ def main(argv: list[str] | None = None) -> int:
             entry["decision"] = verdict["decision"]
             entry["noisy"] = verdict["noisy"]
             entry["control_drift"] = verdict["control_drift"]
+            # The deciding statistic and the per-round ratios behind it.
+            entry["ratio"] = verdict["ratio"]
+            entry["round_ratios"] = verdict["ratios"]
             if not run_errors:
                 entry["reason"] = verdict["reason"]
             if start_median_us is None and accepted == 0 and round_medians("best"):
@@ -612,11 +629,13 @@ def main(argv: list[str] | None = None) -> int:
         append_ledger(entry)
         entries.append(entry)
 
-        # Same statistic the decision uses (the fastest observed round on each arm),
-        # so the printed line can never disagree with the recorded verdict.
-        best_median = min(round_medians("best")) if round_medians("best") else None
-        new_median = min(round_medians("new")) if round_medians("new") else None
-        ratio = (new_median / best_median) if (new_median and best_median) else None
+        # Print the statistic the decision used, so the console cannot disagree
+        # with the recorded verdict.
+        best_median = (statistics.median(round_medians("best"))
+                       if round_medians("best") else None)
+        new_median = (statistics.median(round_medians("new"))
+                      if round_medians("new") else None)
+        ratio = entry.get("ratio")
         print(
             f"gen {generation:>3} | {proposal.knob} "
             f"{policy.format_value(proposal.before)}->{policy.format_value(proposal.after)}"

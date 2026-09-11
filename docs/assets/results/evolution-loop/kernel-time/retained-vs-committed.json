@@ -1,0 +1,95 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 3,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":32,\"quad_stage\":true,\"staging\":\"guarded\",\"thread_tile\":[4,4],\"transpose_a\":true}"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "099d1fecb3ec500cc122c18269dee5498a5e4566dd66aaa024b8068e19ea2dc8",
+  "median_per_iteration_us": {
+    "committed": 80.62980999999999,
+    "retained": 75.71515000000001
+  },
+  "ratio_retained_over_committed": 0.9390466131570944,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8062.981,
+      "per_iteration_us": 80.62980999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7570.614,
+      "per_iteration_us": 75.70613999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r1/retained"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7571.515,
+      "per_iteration_us": 75.71515000000001,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 7971.599,
+      "per_iteration_us": 79.71599,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r2/committed"
+    },
+    {
+      "round": 3,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8134.758,
+      "per_iteration_us": 81.34758,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r3/committed"
+    },
+    {
+      "round": 3,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7731.239,
+      "per_iteration_us": 77.31239,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-nsys/r3/retained"
+    }
+  ]
+}

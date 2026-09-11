@@ -165,6 +165,35 @@ def test_accept_requires_clearing_the_gain_threshold():
     assert clear["decision"] == "accept" and clear["ratio"] == pytest.approx(0.98)
 
 
+def test_a_single_boosted_round_does_not_carry_a_generation():
+    """One clock-boosted round on either arm must not decide the generation."""
+    # The candidate looks 20% faster in one round and identical in the others: the
+    # old fastest-round rule accepted this at 0.80.
+    boosted_candidate = policy.decide(
+        correctness_passed=True, new_medians=[80.0, 100.0, 100.0],
+        best_medians=[100.0, 100.0, 100.0], committed_medians=[100.0, 100.1, 100.0],
+        min_gain=0.02, control_tolerance=0.03)
+    assert boosted_candidate["decision"] == "reject"
+    assert boosted_candidate["ratio"] == pytest.approx(1.0)
+    # The incumbent looks 20% faster in one round: no free pass either.
+    boosted_incumbent = policy.decide(
+        correctness_passed=True, new_medians=[100.0, 100.0, 100.0],
+        best_medians=[80.0, 100.0, 100.0], committed_medians=[100.0, 100.1, 100.0],
+        min_gain=0.02, control_tolerance=0.03)
+    assert boosted_incumbent["decision"] == "reject"
+    assert boosted_incumbent["ratio"] == pytest.approx(1.0)
+
+
+def test_a_consistent_win_is_accepted():
+    verdict = policy.decide(
+        correctness_passed=True, new_medians=[98.0, 98.2, 98.1],
+        best_medians=[100.0, 100.0, 100.1], committed_medians=[100.0, 100.2, 100.1],
+        min_gain=0.01, control_tolerance=0.03)
+    assert verdict["decision"] == "accept"
+    assert verdict["ratio"] == pytest.approx(0.98, abs=0.001)
+    assert len(verdict["ratios"]) == 3
+
+
 def test_a_failed_correctness_gate_blocks_an_otherwise_faster_candidate():
     verdict = policy.decide(correctness_passed=False, new_medians=[50.0],
                             best_medians=[100.0], committed_medians=[100.0, 100.0],

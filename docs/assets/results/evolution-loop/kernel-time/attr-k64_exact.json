@@ -1,0 +1,73 @@
+{
+  "experiment_id": "kernel-time-capture",
+  "instrument": "Nsight Systems, capture_range=cuda, binary --capture bracket",
+  "op": "matmul",
+  "shape": [
+    1024,
+    1024,
+    1024
+  ],
+  "iterations_per_capture": 100,
+  "rounds": 2,
+  "seed": 20260910,
+  "arms": {
+    "committed": "src/main.rs kernels",
+    "retained": "generated variant, params {\"block\":[64,64],\"k_step\":64,\"quad_stage\":true,\"staging\":\"exact\",\"thread_tile\":[4,4],\"transpose_a\":true}"
+  },
+  "input_hashes": {
+    "a.bin": "14bd2864c0df715850e55bf5cd8a3f9cd7268149ca903ecd7b3701010b49fe3d",
+    "b.bin": "a5e7b2f05bb618dbaf37a187677acbf71a4dd9f5f5398d8ac5718ec1c3944155"
+  },
+  "candidates_sha256": "4785db9ed79ac2153942a9bac7391fc2a757ae3b95dbb88e5c440d475d562e3b",
+  "median_per_iteration_us": {
+    "committed": 80.34743,
+    "retained": 80.28573999999999
+  },
+  "ratio_retained_over_committed": 0.9992322094185214,
+  "rows": [
+    {
+      "round": 1,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8004.375,
+      "per_iteration_us": 80.04375,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-attr-k64_exact/r1/committed"
+    },
+    {
+      "round": 1,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 7999.697,
+      "per_iteration_us": 79.99697,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-attr-k64_exact/r1/retained"
+    },
+    {
+      "round": 2,
+      "arm": "retained",
+      "launches": 100,
+      "kernel_names": [
+        "matmul_best"
+      ],
+      "total_us": 8028.574,
+      "per_iteration_us": 80.28573999999999,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-attr-k64_exact/r2/retained"
+    },
+    {
+      "round": 2,
+      "arm": "committed",
+      "launches": 100,
+      "kernel_names": [
+        "tiled_matmul_registers"
+      ],
+      "total_us": 8034.743,
+      "per_iteration_us": 80.34743,
+      "report_dir": "/home/superposition/code/mage-oxide/artifacts/mage-005-attr-k64_exact/r2/committed"
+    }
+  ]
+}
