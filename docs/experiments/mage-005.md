@@ -85,6 +85,21 @@ The pipeline is 11% faster than the configuration the loop retained, and 13.8% f
 
 The comparison across sessions is fair only because the arms are stable: the loop's configuration measured 76.34 µs in the earlier session and 76.25 µs in the later one, and the committed arm reproduced its published value in the session where it was still the registers kernel. cuBLAS remains 1.36× ahead of the best Rust kernel, and its own spread across three rounds (49.3-56.0) is as wide as some of the gaps discussed here, so it is quoted with that caveat.
 
+### The loop can search inside it now
+
+The generated templates gained the pipelined form as a staging value, so the loop can be
+asked to tune inside the structure rather than only around it. Rendered at the hand-written
+parameters it reproduces that kernel: **67.69 against 68.44 µs of kernel time (0.989)**, and
++0.38% over eight paired rounds of event span. Eight generations started from that
+configuration were all refused. The width of the `A` copies and `quad_stage` move the
+pipelined kernel by 0.1-0.3% — the same two knobs were worth 1.6x in the synchronous form,
+so once the copies overlap the constraint has moved and the measurement reads as noise.
+`k_step` 32 is confirmed, larger tiles are worse, and the synchronous forms are 20% behind.
+
+The hand-written design decisions are what an independent search finds too. The space
+around the pipeline is flat, which is the honest close of this thread: the next gain will
+not come from re-arranging it.
+
 ## What the measurement cost to learn
 
 Two claims were made during this work and then withdrawn. Both are worth recording, because both would have survived into a published number.
