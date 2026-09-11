@@ -127,6 +127,30 @@ replay are within noise of each other on these shapes; what both establish is
 that the span column's tile-runtime penalty is a submission artifact rather than
 a property of the kernels.
 
+### Matched launch paths, all three implementations
+
+The comparison's span column awaits every call, for every implementation. Timing
+PyTorch and Triton batched by ten the same way (`measure` in the harness's
+`experiment.py` gains no argument for this; the numbers below come from a script
+under `artifacts/cutile-dev/`), median µs per call, 100 samples after 25 warmup
+calls:
+
+| Operation | PyTorch single → batched | Triton single → batched | cuTile single → batched |
+| --- | --- | --- | --- |
+| Matrix multiplication 1024³ | 47.10 → 46.29 | 87.04 → 75.16 | 185.34 → 170.39 |
+| Bias + GELU 4096×768 | 18.43 → 19.75 | 19.46 → 13.32 | 24.58 → 8.47 |
+| LayerNorm 4096×768 | 13.31 → 12.07 | 20.48 → 13.72 | 29.66 → 10.63 |
+| Triangle contraction 128×32 | 46.80 → 35.50 | 88.38 → 77.72 | 132.29 → 120.00 |
+| Neighbor aggregation 4096×64×65536 | 79.87 → 67.88 | 20.48 → 13.82 | 48.99 → 33.18 |
+
+Batching helps every implementation, and helps the tile runtime most because its
+per-call host cost was the largest. With the launch path matched, bias + GELU
+(8.47) and layer norm (10.63) become the tile kernels' wins, matrix multiply and
+triangle contraction stay behind because those kernels are genuinely slower
+(172.52 and 120.72 against 44.04 and 28.49), and neighbor aggregation lands
+between PyTorch and Triton. Triton's own launcher costs 6–7 µs per awaited call
+(19.46 → 13.32 on bias + GELU); PyTorch's costs about 1 µs.
+
 ## Correctness
 
 Every value in both tables passed the full-element check on every round. Worst
@@ -221,10 +245,7 @@ hatch the plan anticipated, and it is why it was ported last.
 
 ## Open items
 
-1. **The other implementations' launch paths** are still single-launch in the
-   span table: PyTorch and Triton await each call there, so matching all three
-   would mean timing them batched and replayed too.
-2. **Graphs for the other three kernels**: layer norm, triangle contraction and
+1. **Graphs for the other three kernels**: layer norm, triangle contraction and
    neighbor aggregation reject `--mode graph` today; each needs its own capture
    because a graph is recorded per launch shape.
 3. **Tuning**: the twelve-configuration sweep above is bounded and hand-picked.
