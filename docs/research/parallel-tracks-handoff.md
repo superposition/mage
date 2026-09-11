@@ -13,9 +13,10 @@ Coordination index and protocols: mage issue #53. Open performance gaps: issues 
 | Closed measurement loop | `scripts/evolve*.py`, `examples/oxide/src/candidates.rs`, `tests/test_evolution.py`, and the `committed_kernel` hooks in `examples/oxide/src/main.rs` | `/home/superposition/code/mage-oxide` (all merged: #48, #51, #57) | mage-005 (#50 merged; journal entry and field note are live) |
 | Publication | `docs/experiments/**`, `docs/assets/{results,figures}/**`, blog posts | one worktree per stage record | mage-002, 003, 006 (#45, #46/#47, #58) |
 
-The kernel lane's reassignment is recorded here rather than assumed: its ranked gaps
-are unchanged (wide-row LayerNorm first, then GELU and neighbor, then matmul against
-cuBLAS — issue #54 and #59), and mage-006 stays as that agent left it. The loop track
+The kernel lane's reassignment is recorded here rather than assumed. Its first ranked
+gap, wide-row LayerNorm, was closed by the incoming owner (#69); what remains is GELU
+and neighbor (issue #59), the harness-shape LayerNorm hypotheses, and matmul against
+cuBLAS — issue #54. mage-006 stays as the departing agent left it. The loop track
 keeps the `committed_kernel` hooks and the generated surface; nobody owns the
 committed kernels until this line says so.
 
@@ -156,7 +157,13 @@ Event spans (mean of 300 warmed samples, three rotating rounds, mage-006 namespa
 
 ## Open gaps, ranked by what they are worth
 
-1. **LayerNorm at wide rows is the largest measured gap** (issue #54). At 4096x4096 the cuda-oxide kernel takes 255.45 µs against Triton's 181.59 (1.41x) because the register-held row kernel covers rows up to 1024 elements and that shape falls back to the older single-warp kernel. Extending the held structure to wider rows, or giving the wide-row path the same treatment, is the first thing to try.
+1. ~~**LayerNorm at wide rows** (issue #54)~~ — **closed 11 September, PR #69.** The
+   two-warp row kernel was capped at width 2048, so 4096-wide rows fell back to the
+   single-warp kernel at 255.45 µs. The kernel's own soundness condition (each warp's
+   span a multiple of 32 lanes) already held at 4096; raising the cap dispatches to
+   `layer_norm_pair` and measures **186.80 µs** at 4096×4096 in the same idle session,
+   1.37× faster and 2.9% off the 181.59 µs Triton reference. Worst full-output error
+   4.77e-07 on 4096×4096, 4096×512, 3072×1024 and 2048×2048.
 2. **LayerNorm at the harness shape is shape-specific, not structural** (issue #54). 4096x768 is 7-10% behind Triton, but at 8192x768 with the same width the kernel is 26% *ahead*. The wide-row fix above may or may not move this; the remaining hypotheses are in the issue.
 3. **Bias + GELU and neighbor aggregation were never optimised** (issue #59). They are the mage-001 kernels: 11.02 against Triton's 7.76 and cuTile's 7.97, and 10.28 against Triton's 5.97. Both are elementwise or reduction shaped, so the treatment that took LayerNorm from 18.64 to 8.97 should apply.
 4. **Matmul leads Triton** but not the library: 68.62 against cuBLAS 66.22 in the same session, and 44.03-66.22 across sessions. Split-K is the untried lever; re-arranging the pipeline is not — the loop searched that neighbourhood and found it flat (0.1-0.3% across the knobs that used to matter, `k_step` 32 confirmed).
