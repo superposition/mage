@@ -262,6 +262,40 @@ copies was worth more than any further rearrangement of the tiles.
 The generated space has no `cp.async` form, so the loop cannot yet be asked to tune inside
 the pipelined structure; that is the first thing to add.
 
+### Searching inside the pipeline
+
+The generated space now has a pipelined form of its own: one tile per commit group into
+two buffers, `A` staged transposed with four-byte copies because its destination is
+scattered, `B` row-major with sixteen-byte copies. The existing knobs reach it where they
+apply — `k_step`, `block`, `transpose_a` — and the validator refuses what it cannot
+express (a `thread_tile` other than 4x4, and any double-buffered geometry past the shared
+memory budget, which is why `k_step` 64 at 64x64 costs 67 584 B against the 46 080 B
+available).
+
+Rendered at the hand-written parameters it **reproduces that kernel**: event span 70.38
+against 70.66 µs (+0.38%, 8 of 8 rounds) and kernel time 67.69 against 68.44 µs (0.989),
+captured in one session with Triton at 84.21 and cuBLAS at 49.56.
+
+Started from that configuration, the loop ran eight generations and accepted none:
+
+| Gen | Change | Incumbent µs | Candidate µs | Ratio | Decision |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 1 | `transpose_a` true -> false (sixteen-byte A copies) | 70.45 | 70.66 | 1.003 | reject |
+| 2 | `quad_stage` | 70.29 | 70.42 | 1.001 | reject |
+| 3 | `k_step` 32 -> 64 | 70.32 | 82.62 | 1.175 | reject |
+| 4 | `k_step` 32 -> 16 | 70.42 | 72.70 | 1.039 | reject |
+| 5-6 | tiles 128x64 and 64x128 | 70.30 | 83.97, 84.86 | 1.194, 1.204 | reject |
+| 7-8 | staging back to `shared` and `exact` | 70.29 | 84.70 | 1.205 | reject |
+
+Two of those rejections are informative rather than negative. The width of the `A` copies
+and `quad_stage` move the pipelined kernel by 0.1-0.3% — nothing — where the same two
+knobs were worth 1.6x in the synchronous form. Once the copies overlap the arithmetic they
+stop being the constraint, and a measurement that would have read as a win before now
+reads as noise. `k_step` 32 is confirmed as the right depth, larger tiles are worse, and
+the synchronous forms are 20% behind. The hand-written design decisions are what an
+independent search finds too, which is the useful outcome: the space around the pipeline
+is flat, and the next gain will not come from re-arranging it.
+
 ## LayerNorm: a null result
 
 The same loop on layer normalization (`--op layernorm`, starting from the committed
