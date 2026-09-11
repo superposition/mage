@@ -579,6 +579,122 @@ mod kernels {
         }
     }
 
+    /// One block per row with the row slice held in registers: the shape Triton's
+    /// norm kernel uses (many small blocks, ~30 registers, a single pass over x).
+    ///
+    /// One hundred and twenty-eight threads cover rows up to 768 elements with a
+    /// quad each in the first slot and a masked tail slot, so the row is read once:
+    /// the sum and the sum of squares come from the held values and the output pass
+    /// reuses them. Four warps reduce with shuffles and meet in shared memory behind
+    /// one barrier.
+    #[kernel]
+    pub fn layer_norm_row(
+        width: u32,
+        rows: u32,
+        x: &[f32],
+        gamma: &[f32],
+        beta: &[f32],
+        mut out: DisjointSlice<f32>,
+    ) {
+        use cuda_device::vector::{self, F32x4};
+        use cuda_device::warp;
+
+        static mut PARTIAL: SharedArray<f32, 8, 16> = SharedArray::UNINIT;
+        let d = width as usize;
+        let tid = thread::threadIdx_x() as usize;
+        let lane = tid & 31;
+        let warp = tid >> 5;
+        let row = thread::blockIdx_x() as usize;
+        if row >= rows as usize {
+            return;
+        }
+        let base = row * d;
+        let Some(quads) = vector::as_vectors::<F32x4>(&x[base..base + d]) else {
+            return;
+        };
+        let Some(gamma_quads) = vector::as_vectors::<F32x4>(gamma) else {
+            return;
+        };
+        let Some(beta_quads) = vector::as_vectors::<F32x4>(beta) else {
+            return;
+        };
+
+        let mut h0 = F32x4::splat(0.0);
+        let mut h1 = F32x4::splat(0.0);
+        let mut sum = 0.0f32;
+        let mut squares = 0.0f32;
+        macro_rules! take {
+            ($slot:expr, $held:ident) => {{
+                let q = tid + 128 * $slot;
+                if q < quads.len() {
+                    $held = quads[q];
+                    let v = $held.as_slice();
+                    sum += v[0] + v[1] + v[2] + v[3];
+                    squares += v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
+                }
+            }};
+        }
+        take!(0, h0);
+        take!(1, h1);
+
+        let mut offset = 16u32;
+        while offset > 0 {
+            sum += warp::shuffle_down_f32(sum, offset);
+            squares += warp::shuffle_down_f32(squares, offset);
+            offset >>= 1;
+        }
+        if lane == 0 {
+            unsafe {
+                PARTIAL[warp * 2] = sum;
+                PARTIAL[warp * 2 + 1] = squares;
+            }
+        }
+        thread::sync_threads();
+        // Four warps wrote eight values; every thread reads them.
+        let mut total = 0.0f32;
+        let mut total_squares = 0.0f32;
+        let mut w = 0usize;
+        while w < 4 {
+            total += unsafe { PARTIAL[w * 2] };
+            total_squares += unsafe { PARTIAL[w * 2 + 1] };
+            w += 1;
+        }
+        let mean = total / d as f32;
+        let variance = total_squares / d as f32 - mean * mean;
+        let inv = cuda_device::float::rsqrt_approx_f32(variance + 1e-5);
+
+        // SAFETY: the host validated `rows * width` output elements and this block
+        // owns the disjoint row at `base`, so this view aliases no other block.
+        let out_row = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr().add(base), d) };
+        let Some(out_quads) = vector::as_vectors_mut::<F32x4>(out_row) else {
+            return;
+        };
+        macro_rules! emit {
+            ($slot:expr, $held:ident) => {{
+                let q = tid + 128 * $slot;
+                if q < quads.len() {
+                    let v = $held.as_slice();
+                    let gv = gamma_quads[q].as_slice();
+                    let bv = beta_quads[q].as_slice();
+                    out_quads[q] = F32x4::new([
+                        (v[0] - mean) * inv * gv[0] + bv[0],
+                        (v[1] - mean) * inv * gv[1] + bv[1],
+                        (v[2] - mean) * inv * gv[2] + bv[2],
+                        (v[3] - mean) * inv * gv[3] + bv[3],
+                    ]);
+                }
+            }};
+        }
+        emit!(0, h0);
+        emit!(1, h1);
+    }
+
+    /// One block per row with the row slice held in registers: the shape Triton's
+    /// norm kernel uses (many small blocks, ~30 registers, a single pass over x).
+    ///
+    /// One hundred and ninety-two threads cover rows up to 768 elements with exactly one quad each,
+    /// so the row is read once: the sum and the sum of squares come from the held
+    /// values and the output pass reuses them. Three warps reduce with shuffles and
     #[kernel]
     pub fn triangle(n: u32, channels: u32, a: &[f32], b: &[f32], mut out: DisjointSlice<f32>) {
         let index = thread::index_1d();
@@ -934,10 +1050,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         "layernorm" => {
             let width = dims[1];
-            // The two-warp split shares a row by whole 32-lane steps, so it is only
-            // sound when each warp's span is a multiple of 32; narrower rows would
-            // count part of the row twice and take the single-warp kernel instead.
-            if width % 4 == 0 && width <= 2048 && (width as usize).div_ceil(8) % 32 == 0 {
+            // One block per row with the row slice in registers stays within the two
+            // quad slots of its 128 threads, for rows up to 1024 elements.
+            if width % 4 == 0 && width <= 1024 {
+                "layer_norm_row"
+            } else if width % 4 == 0 && width <= 2048 && (width as usize).div_ceil(8) % 32 == 0 {
+                // The two-warp split shares a row by whole 32-lane steps, so it is only
+                // sound when each warp's span is a multiple of 32; narrower rows would
+                // count part of the row twice and take the single-warp kernel instead.
                 "layer_norm_pair"
             } else if width % 4 == 0 {
                 "layer_norm_warp"
@@ -1082,6 +1202,21 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let rows = dims[0] as u32;
                     let width = dims[1] as u32;
                     match committed_kernel {
+                        // One block per row, 128 threads, row slice held in registers.
+                        "layer_norm_row" => module.layer_norm_row(
+                            &stream,
+                            LaunchConfig {
+                                grid_dim: (rows, 1, 1),
+                                block_dim: (128, 1, 1),
+                                shared_mem_bytes: 0,
+                            },
+                            width,
+                            rows,
+                            &a_dev,
+                            &b_dev,
+                            &c_dev,
+                            &mut out,
+                        ),
                         // Two warps per row: 1024 blocks instead of 512, so more warps stay resident.
                         "layer_norm_pair" => module.layer_norm_pair(
                             &stream,
