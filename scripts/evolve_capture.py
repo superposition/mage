@@ -31,7 +31,7 @@ CANDIDATES = REPO_ROOT / "examples" / "oxide" / "src" / "candidates.rs"
 BINARY = REPO_ROOT / "examples" / "oxide" / "target" / "release" / "mage-oxide"
 BUILD_COMMAND = ("source scripts/oxide-env.sh && cd examples/oxide && "
                  "CARGO_BUILD_JOBS=2 cargo oxide build --arch sm_89")
-DEFAULT_SHAPE = (1024, 1024, 1024)
+DEFAULT_SHAPES = {"matmul": (1024, 1024, 1024), "layernorm": (4096, 768)}
 
 
 def load(name: str, base: Path):
@@ -51,9 +51,10 @@ from mage.profiler.backends import NsysBackend  # noqa: E402
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--params", required=True,
-                        help="matmul parameters to capture, as JSON (the retained config)")
-    parser.add_argument("--op", default="matmul", choices=["matmul"])
-    parser.add_argument("--shape", default=",".join(str(part) for part in DEFAULT_SHAPE))
+                        help="the retained configuration, as JSON, in the op's knobs")
+    parser.add_argument("--op", default="matmul", choices=["matmul", "layernorm"])
+    parser.add_argument("--shape", default=None,
+                        help="overrides the op's default shape")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=10)
@@ -67,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="optional second generated configuration, captured as the {'new'} arm")
     args = parser.parse_args(argv)
 
-    shape = [int(part) for part in args.shape.split(",")]
+    shape = ([int(part) for part in args.shape.split(",")] if args.shape
+             else list(DEFAULT_SHAPES[args.op]))
     out = (REPO_ROOT / args.out).resolve()
     work = out / "work"
     shutil.rmtree(work, ignore_errors=True)
@@ -80,7 +82,14 @@ def main(argv: list[str] | None = None) -> int:
     print("retained configuration:", render.params_json(params))
     if compare:
         print("compare configuration: ", render.params_json(compare))
-    render.write_candidates(params, other, compare or params, other, generation=0, dest=CANDIDATES)
+    # The renderer takes (best_matmul, best_layernorm, new_matmul, new_layernorm); the
+    # non-target operation stays at its incumbent in both slots.
+    candidate = compare or params
+    if args.op == "matmul":
+        roles = (params, other, candidate, other)
+    else:
+        roles = (other, params, other, candidate)
+    render.write_candidates(*roles, generation=0, dest=CANDIDATES)
     build = subprocess.run(["bash", "-lc", BUILD_COMMAND], cwd=REPO_ROOT,
                            capture_output=True, text=True)
     if build.returncode != 0:
