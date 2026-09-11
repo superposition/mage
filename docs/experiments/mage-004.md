@@ -1,19 +1,40 @@
-# mage-004: cuTile Rust tile kernels
+---
+title: What the compiler chose
+permalink: /experiments/mage-004/
+eyebrow: "Field note 004 / Mathematics on a GPU"
+description: A tile compiler against hand-written threads on five FP32 operations, where the difference turned out to be the launch path rather than the kernel, and where the library's own search beat the hand-picked one.
+math: true
+---
 
-Status: **all five operations ported and measured** (2026-09-10).
+The earlier notes wrote the kernels by hand: each thread owned a register tile, and
+the shared-memory layout and the barriers were chosen deliberately. This note hands
+those decisions to a compiler. [cuTile Rust](https://github.com/NVlabs/cutile-rs)
+takes *tile* programs — single-threaded code over tiles — and maps them onto warps,
+blocks, shared memory and tensor cores through CUDA Tile IR. The three measured wins
+of the [third field note]({{ '/experiments/mage-003/' | relative_url }}) were tiling
+decisions, so the question here is what happens when the compiler makes them.
 
-This round adds a third Rust-to-CUDA path to the comparison. The first two are
-in [mage-001](mage-001-comparison.md) (first cuda-oxide kernels) and
-[mage-003](mage-003.md) (the same kernels after the shared-read and two-warp
-revisions). cuTile Rust writes *tile* programs — single-threaded code over tiles
-that the compiler maps onto warps, blocks and shared memory through CUDA Tile IR
-— where cuda-oxide writes *thread* programs with the register tiles, shared
-layouts and barriers chosen by hand.
+It makes them well enough to beat the hand-written kernel on one operation and to
+match it on another, and it does not on the two matmul-shaped ones. But the more
+useful result is elsewhere: **most of the difference in the comparison's timing
+column was not the kernel at all.** A lazy runtime prices its host submission path
+when every call is awaited, and the tile runtime's costs about 16 µs per launch
+against the hand-written runtime's 2–3 µs. Batch the launches or replay them from a
+CUDA graph and the spans fall onto the kernel times. The kernels were never as far
+apart as the column said.
 
-The question is the one [kernel-exploration](../research/kernel-exploration.md)
-asks: does layout and reuse decide the result more than the source language? The
-three measured wins of mage-003 were all tiling decisions. Here the compiler
-makes them, and the harness measures what that is worth.
+The journal entry for this work, *Tiles the compiler chose*, is published at the
+[Superposition journal](https://superposition.github.io/journal/). The earlier
+rounds are [field note 001]({{ '/experiments/mage-001/' | relative_url }}),
+[002]({{ '/experiments/mage-002/' | relative_url }}) and
+[003]({{ '/experiments/mage-003/' | relative_url }}).
+
+## The five operations, two views
+
+Five forward FP32 operations run through the same harness as the earlier rounds:
+identical inputs and hashes, every output checked against PyTorch with TF32
+disabled, and two independent views of the cost — GPU kernel time from separate
+Nsight Systems captures, and the span around the call from CUDA events.
 
 ## Method
 
@@ -67,12 +88,7 @@ kernel that takes 7.97 µs.
 That gap is the launch path, not the kernel. Each timed iteration here records
 an event, launches, records a second event and synchronizes; for a runtime whose
 device operations are lazy, that pattern serializes submission and measures it.
-The cuda-oxide binary launches a driver kernel directly. **No claim about the
-relative host cost of the two Rust runtimes follows from this table** — the
-launch-path comparison in
-[the research plan](../research/kernel-exploration.md) is what would separate
-them, and cuTile Rust can express all three modes it asks for (single launch, a
-batch divided by repetitions, and CUDA graph replay).
+The cuda-oxide binary launches a driver kernel directly.
 
 ### The launch path, measured
 
@@ -99,8 +115,8 @@ The cuda-oxide spans in the event table (13.3 µs for bias + GELU over an 11.0 �
 kernel) put that runtime's per-launch host cost at 2–3 µs. So on these shapes the
 tile runtime's host path is roughly 7× the SIMT one's, and the event-span column
 above is inflated by exactly that difference. That is the answer to the question
-mage-002 left open, for the span view: the native advantage in the span column is
-a launch-path artifact, not a kernel one.
+the second field note left open, for the span view: the native advantage in the
+span column is a launch-path artifact, not a kernel one.
 
 The batch sweep does not improve monotonically on matrix multiply (batch 1 → 178.2,
 2 → 173.6, 5 → 173.9, 10 → 160.5, 25 → 184.5, 100 → 185.0 median µs): at this
@@ -130,10 +146,8 @@ a property of the kernels.
 ### Matched launch paths, all three implementations
 
 The comparison's span column awaits every call, for every implementation. Timing
-PyTorch and Triton batched by ten the same way (`measure` in the harness's
-`experiment.py` gains no argument for this; the numbers below come from a script
-under `artifacts/cutile-dev/`), median µs per call, 100 samples after 25 warmup
-calls:
+PyTorch and Triton batched by ten the same way, median µs per call, 100 samples
+after 25 warmup calls:
 
 | Operation | PyTorch single → batched | Triton single → batched | cuTile single → batched |
 | --- | --- | --- | --- |
@@ -189,8 +203,8 @@ is not monotone in any single dimension: deepening K from 8 to 32 costs 42%
 at 16 × 16 but only 6% at 64 × 64, and 128 × 128 × 8 is 2.3× slower than
 128 × 64 × 8, which is the signature of a register or occupancy cliff rather
 than of arithmetic. This is the same class of result the thread-level kernels
-reported in mage-003: the ratio between two builds is what identifies the limit
-when hardware counters are unavailable.
+reported in the third note: the ratio between two builds is what identifies the
+limit when hardware counters are unavailable.
 
 ### The autotuner disagreed, and was right
 
@@ -198,8 +212,8 @@ when hardware counters are unavailable.
 of two: 36 candidates of `BM ∈ {16, 32, 64, 128} × BN ∈ {32, 64, 128} ×
 BK ∈ {8, 16, 32}`, each gated by one correctness launch, measured with the
 library's own device-event timing, and finished by a paired A/B runoff between
-the two finalists. It chose **32 × 128 × 32**, and its trial log is retained at
-[`results/mage-004/tuning/`](https://github.com/superposition/mage/tree/master/docs/assets/results/mage-004/tuning).
+the two finalists. It chose **32 × 128 × 32**, and its trial log is retained
+under `docs/assets/results/mage-004/tuning/`.
 
 The two searches optimized different things. The hand-picked sweep above measured
 the harness's *event span*, which includes the host submission path; the tuner
@@ -272,6 +286,8 @@ hatch the plan anticipated, and it is why it was ported last.
   reduced precision.
 - Compilation, input transfers, process startup and end-to-end service work are
   excluded, as in the earlier rounds.
+- The cuda-oxide column is the third note's retained measurement, not taken in
+  the same session as these numbers.
 
 ## Open items
 
@@ -297,5 +313,6 @@ cd examples/cutile && cargo build --release && cd ../..
 
 `--ops matmul` (or any subset) restricts a run. `CUTILE_MATMUL_TILE=BM,BN,BK`
 selects a different matmul specialization, which is how the sweep above was
-taken. Run one device experiment at a time: a concurrent capture inflates these
-spans.
+taken; `--mode single|batch|graph` selects the launch path; `--features tune`
+adds the autotuner. Run one device experiment at a time: a concurrent capture
+inflates these spans.

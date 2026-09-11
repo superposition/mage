@@ -91,7 +91,7 @@ repaired.
 | `scripts/cutile-env.sh` | `CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3`, `CUTILE_TILEIRAS_PATH`, `PATH`. Never sourced in the same shell as `scripts/oxide-env.sh`, which pins 13.0. |
 | `examples/cutile/` | Crate `mage-cutile`: the five kernels, the same CLI and file contract as `examples/oxide`. |
 | `examples/cutile/rust-toolchain.toml` | Pin the stable channel (1.98.1 today), unlike the oxide track's pinned nightly. |
-| `docs/experiments/mage-004.md` | Measurement record: method, retained values, and the variants that measured worse. |
+| `docs/experiments/mage-004.md` | The field note and the measurement record in one file, as in mage-002 and mage-003: method, retained values, the launch-path tables, and the variants that measured worse. |
 | `docs/assets/figures/mage-004/` | Figures produced by the existing plot scripts. |
 
 Out of scope for the first pass: replacing Mage's Triton operators, autograd, or

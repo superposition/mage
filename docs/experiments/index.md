@@ -21,4 +21,10 @@ A ratio between two register shapes separates shared-memory instructions from ar
 
 [Read the third investigation]({{ '/experiments/mage-003/' | relative_url }}).
 
+### 004 — What the compiler chose
+
+A tile compiler takes over the register tiles, the shared-memory layouts and the barriers. It wins one operation, matches another, and loses the two matmul-shaped ones — and most of the gap in the timing column turns out to be the launch path rather than the kernel. The library's own search also beat the hand-picked tile ladder.
+
+[Read the fourth investigation]({{ '/experiments/mage-004/' | relative_url }}).
+
 The code and detailed evidence are maintained [in GitHub](https://github.com/superposition/mage). The [Superposition journal](https://superposition.github.io/) follows the motivation behind the work.
