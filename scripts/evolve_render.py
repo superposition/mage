@@ -38,7 +38,9 @@ READ_ONLY_TEMPLATES = (
 SHARED_BUDGET_BYTES = 46_080
 MAX_THREADS = 1024
 WARP = 32
-STAGING_MODES = ("shared", "exact", "guarded")
+STAGING_MODES = ("shared", "exact", "guarded", "pipeline")
+# The pipelined form holds two buffers per operand, matching the hand-written kernel.
+PIPE_BUFFERS = 2
 
 # Ordered by prior knowledge: the tile shape and K step dominated the measured
 # history, the staging layout switches were worth 1.6x, the register tile hurt
@@ -56,7 +58,7 @@ MATMUL_KNOBS: dict[str, list] = {
     # indices. `exact` keeps the guard-free form for any tile whose two quad counts
     # fill the same whole number of passes; `guarded` fits every geometry but pays
     # a branch per target.
-    "staging": ["shared", "exact", "guarded"],
+    "staging": ["shared", "exact", "guarded", "pipeline"],
     "thread_tile": [(4, 4), (8, 4), (4, 8), (8, 8)],
 }
 
@@ -125,6 +127,25 @@ def matmul_geometry(params: dict[str, object]) -> dict[str, object]:
     b_quads = k_step * block_n // 4
     a_passes, a_remainder = divmod(a_quads, threads)
     b_passes, b_remainder = divmod(b_quads, threads)
+    # The pipelined form stages elements of A (four-byte copies, scattered
+    # destination) and quads of B, one tile per commit group into two buffers.
+    pipe_at_buf = (block_m + 4) * k_step if transpose_a else block_m * k_step
+    pipe_bs_buf = block_n * k_step
+    pipe_copies_a = block_m * k_step if transpose_a else block_m * k_step // 4
+    pipe_passes_a = (pipe_copies_a + threads - 1) // threads
+    pipe_passes_b = (b_quads + threads - 1) // threads
+    if staging == "pipeline":
+        if (tile_m, tile_n) != (4, 4):
+            raise ParameterError(
+                "the pipelined form consumes one quad per thread per operand, so it needs "
+                f"thread_tile 4x4; got {tile_m}x{tile_n}"
+            )
+        pipelined_bytes = (PIPE_BUFFERS * (pipe_at_buf + pipe_bs_buf)) * 4
+        if pipelined_bytes > SHARED_BUDGET_BYTES:
+            raise ParameterError(
+                f"{pipelined_bytes} B of double-buffered shared memory exceeds the "
+                f"{SHARED_BUDGET_BYTES} B budget"
+            )
     if staging == "shared":
         if not (block_m == block_n == k_step):
             raise ParameterError(
@@ -174,6 +195,17 @@ def matmul_geometry(params: dict[str, object]) -> dict[str, object]:
         "AT_QUAD_STRIDE": at_stride // 4,
         "TRANSPOSE_A": transpose_a,
         "QUAD_STAGE": quad_stage,
+        "PIPELINE": staging == "pipeline",
+        "PIPE_BUFFERS": PIPE_BUFFERS,
+        "PIPE_WAIT": PIPE_BUFFERS - 1,
+        "PIPE_AT_BUF": pipe_at_buf,
+        "PIPE_BS_BUF": pipe_bs_buf,
+        "PIPE_AT_LEN": PIPE_BUFFERS * pipe_at_buf,
+        "PIPE_BS_LEN": PIPE_BUFFERS * pipe_bs_buf,
+        "PIPE_AT_QUADS": pipe_at_buf // 4,
+        "PIPE_BS_QUADS": pipe_bs_buf // 4,
+        "PIPE_A_PASSES": pipe_passes_a,
+        "PIPE_B_PASSES": pipe_passes_b,
         "GUARDED_A": guarded,
         "GUARDED_B": guarded,
         "SHARED_ROWCOL": shared_rowcol,

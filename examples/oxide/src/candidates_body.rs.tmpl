@@ -11,8 +11,14 @@
     ) {
         use cuda_device::vector::{self, F32x4};
 
+//>> if PIPELINE
+        // Two buffers per operand: the pipeline holds one tile while issuing the next.
+        static mut AT: SharedArray<f32, {{PIPE_AT_LEN}}, 16> = SharedArray::UNINIT;
+        static mut BS: SharedArray<f32, {{PIPE_BS_LEN}}, 16> = SharedArray::UNINIT;
+//>> else
         static mut AT: SharedArray<f32, {{AT_LEN}}, 16> = SharedArray::UNINIT;
         static mut BS: SharedArray<f32, {{BS_LEN}}, 16> = SharedArray::UNINIT;
+//>> end
         let tx = thread::threadIdx_x() as usize;
         let ty = thread::threadIdx_y() as usize;
         let tid = ty * {{TX}} + tx;
@@ -21,6 +27,146 @@
         let row0 = thread::blockIdx_y() as usize * {{BM}};
         let col0 = thread::blockIdx_x() as usize * {{BN}};
         let mut acc = [[0.0f32; {{TN}}]; {{TM}}];
+//>> if PIPELINE
+        // Double buffered: the next tile's copies are issued as `cp.async` while the
+        // current tile is multiplied, so the latency of a global-to-shared copy
+        // overlaps the arithmetic instead of preceding it. A is staged transposed,
+        // so its destination is scattered and its copies are four bytes wide; B is
+        // row-major and leaves as sixteen-byte copies.
+        use cuda_device::async_copy::{cp_async_ca_16, cp_async_ca_4, cp_async_commit_group,
+                                      cp_async_wait_group};
+        let tiles = kk / {{BK}};
+        let at_u32 = unsafe { core::ptr::addr_of_mut!(AT) }.cast::<u32>();
+        let bs_u32 = unsafe { core::ptr::addr_of_mut!(BS) }.cast::<u32>();
+        let a_u32 = a.as_ptr().cast::<u32>();
+        let b_u32 = b.as_ptr().cast::<u32>();
+
+        // Issue one tile of A and of B into buffer `$buf` as a single commit group.
+        macro_rules! stage {
+            ($buf:expr, $tile:expr) => {{
+                let buf = $buf;
+                let k_start = $tile * {{BK}};
+//>> if TRANSPOSE_A
+                let adst = unsafe { at_u32.add(buf * {{PIPE_AT_BUF}}) } as usize;
+                let asrc = a_u32 as usize;
+                let mut pass = 0usize;
+                while pass < {{PIPE_A_PASSES}} {
+                    let idx = tid + pass * {{THREADS}};
+                    let row = idx / {{BK}};
+                    let col = idx % {{BK}};
+                    unsafe {
+                        cp_async_ca_4(
+                            (adst + (col * {{AT_STRIDE}} + row) * 4) as *mut u32,
+                            (asrc + ((row0 + row) * kk + k_start + col) * 4) as *const u32,
+                        );
+                    }
+                    pass += 1;
+                }
+//>> else
+                let adst = unsafe { at_u32.add(buf * {{PIPE_AT_BUF}}) } as usize;
+                let asrc = a_u32 as usize;
+                let mut pass = 0usize;
+                while pass < {{PIPE_A_PASSES}} {
+                    let q = tid + pass * {{THREADS}};
+                    let row = q / {{A_QUADS_PER_ROW}};
+                    let colq = q % {{A_QUADS_PER_ROW}};
+                    unsafe {
+                        cp_async_ca_16(
+                            (adst + (row * {{BK}} + colq * 4) * 4) as *mut u32,
+                            (asrc + ((row0 + row) * kk + k_start + colq * 4) * 4) as *const u32,
+                        );
+                    }
+                    pass += 1;
+                }
+//>> end
+                let bdst = unsafe { bs_u32.add(buf * {{PIPE_BS_BUF}}) } as usize;
+                let bsrc = b_u32 as usize;
+                let mut pass = 0usize;
+                while pass < {{PIPE_B_PASSES}} {
+                    let quad = tid + pass * {{THREADS}};
+                    let row = quad / {{B_QUADS_PER_ROW}};
+                    let colq = quad % {{B_QUADS_PER_ROW}};
+                    unsafe {
+                        cp_async_ca_16(
+                            (bdst + (row * {{BN}} + colq * 4) * 4) as *mut u32,
+                            (bsrc + ((k_start + row) * nn + col0 + colq * 4) * 4) as *const u32,
+                        );
+                    }
+                    pass += 1;
+                }
+                unsafe { cp_async_commit_group() };
+            }};
+        }
+
+        // Multiply the tile staged in buffer `$buf` into the accumulators.
+        macro_rules! consume {
+            ($buf:expr) => {{
+                let buf = $buf;
+                let a_base = unsafe {
+                    core::ptr::addr_of!(AT).cast::<F32x4>().add(buf * {{PIPE_AT_QUADS}})
+                };
+                let b_base = unsafe {
+                    core::ptr::addr_of!(BS).cast::<F32x4>().add(buf * {{PIPE_BS_QUADS}})
+                };
+                let mut i = 0usize;
+                while i < {{BK}} {
+//>> if TRANSPOSE_A
+                    let a_lanes = unsafe { (*a_base.add(i * {{AT_QUAD_STRIDE}} + ty)).0 };
+//>> else
+                    let mut av = [0.0f32; {{TM}}];
+                    let mut a_row = 0usize;
+                    while a_row < {{TM}} {
+                        unsafe {
+                            av[a_row] = AT[buf * {{PIPE_AT_BUF}} + (ty * {{TM}} + a_row) * {{BK}} + i];
+                        }
+                        a_row += 1;
+                    }
+//>> end
+                    let b_lanes = unsafe { (*b_base.add(i * {{B_QUADS_PER_ROW}} + tx)).0 };
+                    let mut r = 0usize;
+                    while r < {{TM}} {
+//>> if TRANSPOSE_A
+                        let av = a_lanes[r];
+//>> end
+                        let mut c = 0usize;
+                        while c < {{TN}} {
+//>> if TRANSPOSE_A
+                            acc[r][c] += av * b_lanes[c];
+//>> else
+                            acc[r][c] += av[r] * b_lanes[c];
+//>> end
+                            c += 1;
+                        }
+                        r += 1;
+                    }
+                    i += 1;
+                }
+            }};
+        }
+
+        stage!(0, 0);
+        let mut prefetch = 1usize;
+        while prefetch < {{PIPE_BUFFERS}} && prefetch < tiles {
+            stage!(prefetch % {{PIPE_BUFFERS}}, prefetch);
+            prefetch += 1;
+        }
+        let last = tiles - 1;
+        let mut tile = 0usize;
+        while tile < last {
+            // The group for the tile after this one may still be in flight.
+            unsafe { cp_async_wait_group({{PIPE_WAIT}}) };
+            thread::sync_threads();
+            consume!(tile % {{PIPE_BUFFERS}});
+            thread::sync_threads();
+            if tile + {{PIPE_BUFFERS}} < tiles {
+                stage!(tile % {{PIPE_BUFFERS}}, tile + {{PIPE_BUFFERS}});
+            }
+            tile += 1;
+        }
+        unsafe { cp_async_wait_group(0) };
+        thread::sync_threads();
+        consume!(last % {{PIPE_BUFFERS}});
+//>> else
         let mut step = 0usize;
         while step < kk {
             let b_quads = unsafe { core::ptr::addr_of_mut!(BS) }.cast::<F32x4>();
@@ -153,6 +299,7 @@
             thread::sync_threads();
             step += {{BK}};
         }
+//>> end
         // SAFETY: the host validated `m * n` output elements and launched exactly
         // one {{BM}}x{{BN}} tile per block, so every written cell is inside the
         // buffer and belongs to this block alone.
